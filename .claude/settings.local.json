@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /Users/betancur/Developer/StackChan/.claude/skills/firmware-build)",
+      "Bash(find /Users/betancur/Developer/roz-voice-server -type f -name \"*.py\" -o -name \"*.json\" -o -name \"*.yaml\" -o -name \"*.yml\" -o -name \"*.toml\" -o -name \"*.env*\" -o -name \"*.txt\" -o -name \"*.md\" | head -50)"
+    ]
+  }
+}
