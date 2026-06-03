@@ -7,6 +7,7 @@
 #include <memory>
 #include <mooncake_log.h>
 #include <nvs_flash.h>
+#include <esp_sleep.h>
 
 static std::unique_ptr<Hal> _hal_instance;
 static const std::string_view _tag = "HAL";
@@ -85,6 +86,16 @@ std::string Hal::getFactoryMacString(std::string divider)
 void Hal::reboot()
 {
     esp_restart();
+}
+
+void Hal::powerOff()
+{
+    mclog::tagInfo("HAL", "power off — entering deep sleep");
+    // Turn off display backlight and LEDs before sleeping
+    setBackLightBrightness(0);
+    showRgbColor(0, 0, 0);
+    // No wake source configured — AXP2101 power button will restart the device
+    esp_deep_sleep_start();
 }
 
 static void _confirm_ota_image_if_stable()
@@ -209,6 +220,7 @@ XiaozhiConfig_t Hal::getXiaozhiConfig()
         .idleShutdownTimeSeconds   = bridge_config.idleShutdownTimeSeconds,
         .allowShutdownWhenCharging = bridge_config.allowShutdownWhenCharging,
         .idleRandomMovementLevel   = bridge_config.idleRandomMovementLevel,
+        .startRozOnBoot            = bridge_config.startRozOnBoot,
     };
 }
 
@@ -218,6 +230,7 @@ void Hal::setXiaozhiConfig(XiaozhiConfig_t config)
         .idleShutdownTimeSeconds   = config.idleShutdownTimeSeconds,
         .allowShutdownWhenCharging = config.allowShutdownWhenCharging,
         .idleRandomMovementLevel   = config.idleRandomMovementLevel,
+        .startRozOnBoot            = config.startRozOnBoot,
     });
 }
 

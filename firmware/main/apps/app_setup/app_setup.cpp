@@ -71,6 +71,15 @@ void AppSetup::onOpen()
               }}},
         },
         {
+            "Roz",
+            {{"Settings",
+              [&]() {
+                  _destroy_menu    = true;
+                  _need_warm_reset = true;
+                  _worker          = std::make_unique<RozSettingsWorker>();
+              }}},
+        },
+        {
             "AI.Agent",
             {{"General",
               [&]() {

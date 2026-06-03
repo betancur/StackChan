@@ -9,6 +9,7 @@
 #include <mooncake_log.h>
 #include <stackchan/stackchan.h>
 #include <cstdint>
+#include <esp_sleep.h>
 
 using namespace mooncake;
 
@@ -29,6 +30,15 @@ void AppLauncher::onLauncherOpen()
     if (!_startup_checked && !GetHAL().isAppConfiged()) {
         mclog::tagInfo(getAppInfo().name, "app not configured, start startup worker");
         _startup_worker = std::make_unique<setup_workers::StartupWorker>();
+    } else if (GetHAL().getXiaozhiConfig().startRozOnBoot) {
+        for (const auto& props : getAppProps()) {
+            if (props.info.name == "ROZ") {
+                mclog::tagInfo(getAppInfo().name, "startRozOnBoot: opening app id {}", props.appID);
+                openApp(props.appID);
+                return;
+            }
+        }
+        create_launcher_view();
     } else {
         create_launcher_view();
     }
@@ -48,6 +58,7 @@ void AppLauncher::onLauncherRunning()
     } else {
         _view->update();
         screensaver_update();
+        poweroff_update();
     }
 
     GetStackChan().update();
@@ -95,5 +106,17 @@ void AppLauncher::screensaver_update()
     if (_screensaver && GetHAL().millis() - _screensaver_timecount > 30) {
         _screensaver_timecount = GetHAL().millis();
         _screensaver->update();
+    }
+}
+
+void AppLauncher::poweroff_update()
+{
+    // Power off after 5 minutes of inactivity in the launcher (screensaver + extra time).
+    // LVGL idle time resets on any touch, so this is safe.
+    const uint32_t POWEROFF_TIMEOUT_MS = 5 * 60 * 1000;  // 5 minutes
+
+    uint32_t idle_time = lv_display_get_inactive_time(NULL);
+    if (idle_time >= POWEROFF_TIMEOUT_MS) {
+        GetHAL().powerOff();
     }
 }

@@ -356,6 +356,22 @@ private:
  * @brief
  *
  */
+class RozSettingsWorker : public WorkerBase {
+public:
+    RozSettingsWorker();
+    void update() override;
+
+private:
+    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
+    std::unique_ptr<uitk::lvgl_cpp::Container> _panel_boot;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_boot_title;
+    std::unique_ptr<uitk::lvgl_cpp::Switch> _switch_start_roz_on_boot;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_confirm;
+
+    XiaozhiConfig_t _config;
+    bool _confirm_flag = false;
+};
+
 class TimezoneWorker : public WorkerBase {
 public:
     TimezoneWorker();

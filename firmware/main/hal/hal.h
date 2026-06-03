@@ -118,6 +118,7 @@ struct XiaozhiConfig_t {
     uint32_t idleShutdownTimeSeconds = 600;
     bool allowShutdownWhenCharging   = false;
     uint8_t idleRandomMovementLevel  = 2;
+    bool startRozOnBoot              = false;
 };
 
 /**
@@ -188,6 +189,7 @@ public:
     std::array<uint8_t, 6> getFactoryMac();
     std::string getFactoryMacString(std::string divider = "");
     void reboot();
+    void powerOff();   // deep sleep — AXP2101 stays on; power button wakes device
     void updateHeapStatusLog();
     uint8_t getBatteryLevel();
     bool isBatteryCharging();
