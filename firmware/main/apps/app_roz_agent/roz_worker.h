@@ -22,6 +22,12 @@ class WebSocket;
 
 namespace roz {
 
+struct ToolCall {
+    std::string id;
+    std::string tool;
+    std::string params;  // raw JSON object, e.g. {"emotion":"happy"}
+};
+
 enum class State {
     Idle,
     Recording,
@@ -57,6 +63,12 @@ public:
     // Returns true (once) when the last idle was due to empty STT — caller should
     // skip auto-listen so the noise loop doesn't repeat.
     bool takeNoSpeech() { return _no_speech.exchange(false); }
+
+    // Called from app thread (onRunning): returns true and fills 'out' if a tool
+    // call from the server is pending.  The caller must call sendToolResult().
+    bool takeToolCall(ToolCall& out);
+    void sendToolResult(const std::string& id, const std::string& result_json,
+                        const std::string& error = "");
 
 private:
     // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -97,6 +109,9 @@ private:
     std::string       _speech_text;
     std::string       _speech_emotion;
     std::atomic<bool> _speech_dirty {false};
+
+    // ── Tool call queue (written from WS thread, consumed by app thread) ─────
+    QueueHandle_t _tool_queue = nullptr;  // queue of ToolCall* (heap-allocated)
 
 };
 

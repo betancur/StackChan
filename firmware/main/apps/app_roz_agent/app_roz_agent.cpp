@@ -9,12 +9,58 @@
 #include <smooth_lvgl.hpp>
 #include <stackchan/stackchan.h>
 #include <apps/common/common.h>
+#include <cctype>
+#include <ctime>
+#include <cstdio>
 
 using namespace mooncake;
 using namespace stackchan;
 using namespace smooth_ui_toolkit::lvgl_cpp;
 
 static const std::string_view TAG = "AppRozAgent";
+
+// ── Tool param helpers ────────────────────────────────────────────────────────
+
+static std::string param_str(const std::string& j, const char* key, const char* def = "")
+{
+    std::string needle = std::string("\"") + key + "\":";
+    auto p = j.find(needle);
+    if (p == std::string::npos) return def;
+    p += needle.size();
+    while (p < j.size() && j[p] == ' ') p++;
+    if (p >= j.size() || j[p] != '"') return def;
+    p++;
+    auto q = j.find('"', p);
+    return (q == std::string::npos) ? std::string{def} : j.substr(p, q - p);
+}
+
+static int param_int(const std::string& j, const char* key, int def = 0)
+{
+    std::string needle = std::string("\"") + key + "\":";
+    auto p = j.find(needle);
+    if (p == std::string::npos) return def;
+    p += needle.size();
+    while (p < j.size() && j[p] == ' ') p++;
+    if (p >= j.size()) return def;
+    bool neg = (j[p] == '-');
+    if (neg) p++;
+    if (p >= j.size() || !isdigit((unsigned char)j[p])) return def;
+    int val = 0;
+    while (p < j.size() && isdigit((unsigned char)j[p])) val = val * 10 + (j[p++] - '0');
+    return neg ? -val : val;
+}
+
+static bool param_bool(const std::string& j, const char* key, bool def = false)
+{
+    std::string needle = std::string("\"") + key + "\":";
+    auto p = j.find(needle);
+    if (p == std::string::npos) return def;
+    p += needle.size();
+    while (p < j.size() && j[p] == ' ') p++;
+    if (j.substr(p, 4) == "true")  return true;
+    if (j.substr(p, 5) == "false") return false;
+    return def;
+}
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 
@@ -182,6 +228,15 @@ void AppRozAgent::onRunning()
                 applyEmotion(sp_emotion);
             }
         }
+        // ── Tool call dispatch ────────────────────────────────────────────────
+        {
+            roz::ToolCall tc;
+            while (_worker->takeToolCall(tc)) {
+                std::string result = executeTool(tc);
+                _worker->sendToolResult(tc.id, result);
+            }
+        }
+
     } else if (!_worker) {
         _head_pressed.store(false);
         _head_released.store(false);
@@ -210,6 +265,14 @@ void AppRozAgent::onRunning()
     // ── Hibernation check (only when idle and connected) ─────────────────────
     if (_worker && !_is_hibernating) {
         checkHibernation();
+    }
+
+    // ── Close app after 1 minute in hibernation without interaction ───────────
+    if (_is_hibernating &&
+        GetHAL().millis() - _hibernate_since_ms >= CLOSE_AFTER_SLEEP_MS) {
+        mclog::tagInfo(TAG, "sleep timeout — closing app");
+        close();
+        return;
     }
 
     // ── LVGL update ───────────────────────────────────────────────────────────
@@ -266,8 +329,7 @@ void AppRozAgent::applyStateToAvatar(roz::State state)
             auto& sc = GetStackChan();
             sc.addModifier(std::make_unique<TimedEmotionModifier>(avatar::Emotion::Sad, 3000));
             sc.addModifier(std::make_unique<SpeakingModifier>(2000, 180, false));
-            GetHAL().setRgbColor(0, 50, 0, 0);   // red LED
-            GetHAL().refreshRgb();
+            GetHAL().showRgbColor(50, 0, 0);   // red LEDs
             break;
         }
     }
@@ -290,8 +352,7 @@ void AppRozAgent::enterIdle()
     _idle_motion_id = sc.addModifier(std::make_unique<IdleMotionModifier>());    // 4-8 s interval
     _idle_expr_id   = sc.addModifier(std::make_unique<IdleExpressionModifier>());
 
-    GetHAL().setRgbColor(0, 0, 0, 0);
-    GetHAL().refreshRgb();
+    GetHAL().showRgbColor(0, 0, 0);
 }
 
 void AppRozAgent::enterRecording()
@@ -310,8 +371,7 @@ void AppRozAgent::enterRecording()
     // Center-forward "listening" pose
     sc.motion().moveWithSpeed(0, 200, 250);
 
-    GetHAL().setRgbColor(0, 0, 50, 0);   // green LED
-    GetHAL().refreshRgb();
+    GetHAL().showRgbColor(0, 50, 0);   // green LEDs
 }
 
 void AppRozAgent::enterSending()
@@ -325,8 +385,7 @@ void AppRozAgent::enterSending()
         _idle_motion_id = sc.addModifier(std::make_unique<IdleMotionModifier>(6000, 10000));
     }
 
-    GetHAL().setRgbColor(0, 0, 0, 50);   // blue LED
-    GetHAL().refreshRgb();
+    GetHAL().showRgbColor(0, 0, 50);   // blue LEDs
 }
 
 void AppRozAgent::enterPlaying()
@@ -344,8 +403,7 @@ void AppRozAgent::enterPlaying()
         _speaking_id = sc.addModifier(std::make_unique<SpeakingModifier>(0, 180, true));
     }
 
-    GetHAL().setRgbColor(0, 0, 20, 50);  // cyan-ish LED
-    GetHAL().refreshRgb();
+    GetHAL().showRgbColor(0, 20, 50);  // cyan-ish LEDs
 }
 
 // ── Emotion ───────────────────────────────────────────────────────────────────
@@ -384,7 +442,8 @@ void AppRozAgent::checkHibernation()
 void AppRozAgent::enterHibernation()
 {
     mclog::tagInfo(TAG, "entering hibernation");
-    _is_hibernating = true;
+    _is_hibernating      = true;
+    _hibernate_since_ms  = GetHAL().millis();
 
     LvglLockGuard lock;
     auto& sc = GetStackChan();
@@ -403,8 +462,7 @@ void AppRozAgent::enterHibernation()
     sc.motion().moveWithSpeed(0, 0, 80);
 
     // LEDs off
-    GetHAL().setRgbColor(0, 0, 0, 0);
-    GetHAL().refreshRgb();
+    GetHAL().showRgbColor(0, 0, 0);
 
     // Dim backlight
     GetHAL().setBackLightBrightness(20);
@@ -421,4 +479,89 @@ void AppRozAgent::wakeFromHibernation()
     GetHAL().setBackLightBrightness(GetHAL().getBackLightBrightness() == 20
                                      ? 75 : GetHAL().getBackLightBrightness());
     enterIdle();
+}
+
+// ── Tool execution ────────────────────────────────────────────────────────────
+
+std::string AppRozAgent::executeTool(const roz::ToolCall& tc)
+{
+    const auto& tool   = tc.tool;
+    const auto& params = tc.params;
+    mclog::tagInfo(TAG, "executeTool: {} {}", tool, params);
+
+    if (tool == "set_emotion") {
+        std::string emotion = param_str(params, "emotion", "neutral");
+        {
+            LvglLockGuard lock;
+            applyEmotion(emotion);
+        }
+        return "{\"ok\":true}";
+    }
+
+    if (tool == "move_head") {
+        int pan   = param_int(params, "pan",  0);
+        int tilt  = param_int(params, "tilt", 0);
+        pan  = std::max(-1000, std::min(1000, pan));
+        tilt = std::max(-1000, std::min(1000, tilt));
+        {
+            LvglLockGuard lock;
+            GetStackChan().motion().moveWithSpeed(pan, tilt, 300);
+        }
+        return "{\"ok\":true}";
+    }
+
+    if (tool == "set_led") {
+        uint8_t r = (uint8_t)std::max(0, std::min(255, param_int(params, "r", 0)));
+        uint8_t g = (uint8_t)std::max(0, std::min(255, param_int(params, "g", 0)));
+        uint8_t b = (uint8_t)std::max(0, std::min(255, param_int(params, "b", 0)));
+        GetHAL().showRgbColor(r, g, b);
+        GetHAL().refreshRgb();
+        return "{\"ok\":true}";
+    }
+
+    if (tool == "set_volume") {
+        int level = std::max(0, std::min(100, param_int(params, "level", 50)));
+        GetHAL().setSpeakerVolume((uint8_t)level);
+        return "{\"ok\":true}";
+    }
+
+    if (tool == "get_volume") {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "{\"level\":%d}", (int)GetHAL().getSpeakerVolume());
+        return buf;
+    }
+
+    if (tool == "get_battery") {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "{\"level\":%d,\"charging\":%s}",
+                 (int)GetHAL().getBatteryLevel(),
+                 GetHAL().isBatteryCharging() ? "true" : "false");
+        return buf;
+    }
+
+    if (tool == "get_time") {
+        time_t now = time(nullptr);
+        struct tm* t = localtime(&now);
+        char buf[80];
+        snprintf(buf, sizeof(buf), "{\"unix\":%lld,\"iso\":\"%04d-%02d-%02dT%02d:%02d:%02d\"}",
+                 (long long)now,
+                 t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+                 t->tm_hour, t->tm_min, t->tm_sec);
+        return buf;
+    }
+
+    if (tool == "set_laser") {
+        bool on = param_bool(params, "on", false);
+        GetHAL().setLaserEnabled(on);
+        return "{\"ok\":true}";
+    }
+
+    if (tool == "set_brightness") {
+        int level = std::max(0, std::min(100, param_int(params, "level", 75)));
+        GetHAL().setBackLightBrightness((uint8_t)level);
+        return "{\"ok\":true}";
+    }
+
+    mclog::tagWarn(TAG, "Unknown tool: {}", tool);
+    return "{\"error\":\"unknown_tool\"}";
 }

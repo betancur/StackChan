@@ -33,8 +33,10 @@ inline constexpr int      OPUS_MAX_FRAME   = OPUS_OUT_RATE * 20 / 1000;  // 480 
 inline constexpr uint8_t  WS_TYPE_AUDIO   = 0x01;
 inline constexpr uint8_t  WS_TYPE_VAD     = 0x02;
 inline constexpr uint8_t  WS_TYPE_STATE   = 0x04;
-inline constexpr uint8_t  WS_TYPE_ERROR   = 0x05;
-inline constexpr uint8_t  WS_TYPE_CONFIG  = 0x10;
+inline constexpr uint8_t  WS_TYPE_ERROR       = 0x05;
+inline constexpr uint8_t  WS_TYPE_TOOL_CALL   = 0x06;  // server → firmware: {"id":"...","tool":"...","params":{}}
+inline constexpr uint8_t  WS_TYPE_TOOL_RESULT = 0x07;  // firmware → server: {"id":"...","result":{...},"error":""}
+inline constexpr uint8_t  WS_TYPE_CONFIG      = 0x10;
 
 // ── Playback queue ────────────────────────────────────────────────────────────
 inline constexpr size_t   PLAY_QUEUE_DEPTH = 256;  // Opus packets (~5s) buffered for playback

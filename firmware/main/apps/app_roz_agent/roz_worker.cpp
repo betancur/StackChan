@@ -45,6 +45,26 @@ static std::string json_str(const std::string& json, const char* key)
     return (q == std::string::npos) ? std::string{} : json.substr(p, q - p);
 }
 
+// Extracts a JSON object value (returns "{}" if not found or not an object).
+static std::string json_obj(const std::string& json, const char* key)
+{
+    std::string needle = std::string("\"") + key + "\":";
+    auto p = json.find(needle);
+    if (p == std::string::npos) return "{}";
+    p += needle.size();
+    while (p < json.size() && json[p] == ' ') p++;
+    if (p >= json.size() || json[p] != '{') return "{}";
+    int depth = 0;
+    auto q = p;
+    while (q < json.size()) {
+        if (json[q] == '{') depth++;
+        else if (json[q] == '}') { if (--depth == 0) { q++; break; } }
+        else if (json[q] == '"') { q++; while (q < json.size() && json[q] != '"') { if (json[q] == '\\') q++; q++; } }
+        q++;
+    }
+    return json.substr(p, q - p);
+}
+
 bool RozWorker::takeSpeechUpdate(std::string& out_text, std::string& out_emotion)
 {
     if (!_speech_dirty.load(std::memory_order_acquire)) return false;
@@ -130,6 +150,19 @@ void RozWorker::onWsData(const char* data, size_t len, bool binary)
             if (!_play_task) setState(State::Idle);
         }
 
+    } else if (type == WS_TYPE_TOOL_CALL) {
+        std::string json(reinterpret_cast<const char*>(payload), payload_len);
+        ESP_LOGI(TAG, "Tool call: %s", json.c_str());
+        auto* tc = new ToolCall{
+            json_str(json, "id"),
+            json_str(json, "tool"),
+            json_obj(json, "params"),
+        };
+        if (xQueueSend(_tool_queue, &tc, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Tool queue full, dropping call");
+            delete tc;
+        }
+
     } else if (type == WS_TYPE_ERROR) {
         _last_error = std::string(reinterpret_cast<const char*>(payload), payload_len);
         ESP_LOGE(TAG, "Server error: %s", _last_error.c_str());
@@ -142,6 +175,7 @@ void RozWorker::onWsData(const char* data, size_t len, bool binary)
 RozWorker::RozWorker()
 {
     _play_queue = xQueueCreate(PLAY_QUEUE_DEPTH, sizeof(std::vector<uint8_t>*));
+    _tool_queue = xQueueCreate(4, sizeof(ToolCall*));
     esp_audio_dec_register_default();
 }
 
@@ -163,6 +197,11 @@ RozWorker::~RozWorker()
         vQueueDelete(_play_queue);
     }
 
+    if (_tool_queue) {
+        ToolCall* tc = nullptr;
+        while (xQueueReceive(_tool_queue, &tc, 0) == pdTRUE) { delete tc; }
+        vQueueDelete(_tool_queue);
+    }
 }
 
 void RozWorker::connect()
@@ -365,6 +404,30 @@ void RozWorker::runRecTask()
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────
+
+bool RozWorker::takeToolCall(ToolCall& out)
+{
+    ToolCall* tc = nullptr;
+    if (xQueueReceive(_tool_queue, &tc, 0) != pdTRUE || !tc) return false;
+    out = std::move(*tc);
+    delete tc;
+    return true;
+}
+
+void RozWorker::sendToolResult(const std::string& id, const std::string& result_json,
+                               const std::string& error)
+{
+    char buf[512];
+    if (error.empty()) {
+        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"result\":%s,\"error\":\"\"}",
+                 id.c_str(), result_json.c_str());
+    } else {
+        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"result\":{},\"error\":\"%s\"}",
+                 id.c_str(), error.c_str());
+    }
+    ESP_LOGI(TAG, "Tool result: %s", buf);
+    sendJson(WS_TYPE_TOOL_RESULT, buf);
+}
 
 void RozWorker::startPlayTask()
 {

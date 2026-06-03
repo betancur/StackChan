@@ -58,9 +58,11 @@ private:
     uint32_t _active_state_since_ms = 0;
 
     // ── Hibernation ────────────────────────────────────────────────────────────
-    static constexpr uint32_t HIBERNATE_MS = 5 * 60 * 1000;  // 5 minutes
-    uint32_t _last_activity_ms = 0;
-    bool     _is_hibernating   = false;
+    static constexpr uint32_t HIBERNATE_MS       = 5 * 60 * 1000;  // idle → sleep
+    static constexpr uint32_t CLOSE_AFTER_SLEEP_MS = 60 * 1000;    // sleep → close app
+    uint32_t _last_activity_ms  = 0;
+    uint32_t _hibernate_since_ms = 0;
+    bool     _is_hibernating    = false;
 
     void resetActivityTimer();
     void checkHibernation();
@@ -69,6 +71,7 @@ private:
 
     void applyStateToAvatar(roz::State state);
     void applyEmotion(const std::string& emotion);
+    std::string executeTool(const roz::ToolCall& tc);
     void enterIdle();
     void enterRecording();
     void enterSending();

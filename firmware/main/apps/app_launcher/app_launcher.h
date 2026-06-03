@@ -28,4 +28,5 @@ private:
 
     void create_launcher_view();
     void screensaver_update();
+    void poweroff_update();
 };
