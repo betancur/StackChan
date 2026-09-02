@@ -171,7 +171,8 @@ private:
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
     static constexpr uint32_t ESCALATE_AFTER_MS   = 60 * 1000;  // prompt unanswered → escalate
     static constexpr uint32_t REMINDER_EVERY_MS   = 30 * 1000;
-    static constexpr uint32_t LOOK_STEP_MS        = 600;
+    static constexpr uint32_t LOOK_STEP_MS        = 900;
+    static constexpr uint32_t LOOK_SETTLE_MS      = 700;  // ignore camera while the head moves
     static constexpr uint32_t LOOK_TARGET_AGE_MS  = 2000;
     static constexpr uint32_t SWEEP_EVERY_MS      = 2500;
     static constexpr int      LOOK_YAW_SIGN       = 1;  // flip if the head turns away from the person

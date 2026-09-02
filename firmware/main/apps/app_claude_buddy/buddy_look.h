@@ -33,6 +33,13 @@ public:
     /// seen within maxAgeMs.
     bool target(int& offset, uint32_t maxAgeMs) const;
 
+    /// Same as target() but consumes it: each detection drives at most one step.
+    bool takeTarget(int& offset, uint32_t maxAgeMs);
+
+    /// The head is moving: ignore frames until `ms` from now and re-baseline
+    /// afterwards, so the camera's own motion is not mistaken for a person.
+    void suppress(uint32_t ms);
+
 private:
     LookTracker() = default;
     static void task_entry(void* arg);
@@ -45,6 +52,7 @@ private:
     static constexpr int BANDS      = 8;
     static constexpr uint32_t PERIOD_MS = 350;
 
+    uint32_t _last_total        = 0;        // diagnostics
     uint8_t* _prev              = nullptr;  // MAX_W * MAX_H luminance
     uint8_t* _cur               = nullptr;
     bool     _have_prev         = false;
@@ -53,6 +61,7 @@ private:
     std::atomic<bool> _stop_req{false};
     std::atomic<int>  _offset{0};
     std::atomic<uint32_t> _seen_ms{0};
+    std::atomic<uint32_t> _suppress_until{0};
 };
 
 }  // namespace buddy

@@ -55,6 +55,11 @@ void LookTracker::stop()
     }
 }
 
+void LookTracker::suppress(uint32_t ms)
+{
+    _suppress_until = GetHAL().millis() + ms;
+}
+
 bool LookTracker::target(int& offset, uint32_t maxAgeMs) const
 {
     uint32_t seen = _seen_ms.load();
@@ -62,6 +67,15 @@ bool LookTracker::target(int& offset, uint32_t maxAgeMs) const
         return false;
     }
     offset = _offset.load();
+    return true;
+}
+
+bool LookTracker::takeTarget(int& offset, uint32_t maxAgeMs)
+{
+    if (!target(offset, maxAgeMs)) {
+        return false;
+    }
+    _seen_ms = 0;
     return true;
 }
 
@@ -82,11 +96,28 @@ void LookTracker::run()
     }
     mclog::tagInfo(TAG, "tracking started");
 
+    uint32_t frames = 0, hits = 0, fails = 0, last_log = GetHAL().millis();
     while (!_stop_req) {
         uint32_t t0 = GetHAL().millis();
+        if (_suppress_until != 0 && static_cast<int32_t>(t0 - _suppress_until) < 0) {
+            _have_prev = false;  // re-baseline on the first frame after the move
+            vTaskDelay(pdMS_TO_TICKS(60));
+            continue;
+        }
         if (camera->StreamCaptures()) {
-            processFrame(camera->GetFrameData(), camera->GetFrameSize(), camera->GetFrameWidth(),
-                         camera->GetFrameHeight(), camera->GetFrameFormat());
+            frames++;
+            if (processFrame(camera->GetFrameData(), camera->GetFrameSize(), camera->GetFrameWidth(),
+                             camera->GetFrameHeight(), camera->GetFrameFormat())) {
+                hits++;
+            }
+        } else {
+            fails++;
+        }
+        if (GetHAL().millis() - last_log >= 3000) {
+            last_log = GetHAL().millis();
+            mclog::tagInfo(TAG, "frames={} motion_hits={} capture_fails={} fmt=0x{:x} {}x{} last_total={} offset={}",
+                           frames, hits, fails, (unsigned)camera->GetFrameFormat(), camera->GetFrameWidth(),
+                           camera->GetFrameHeight(), _last_total, _offset.load());
         }
         uint32_t spent = GetHAL().millis() - t0;
         vTaskDelay(pdMS_TO_TICKS(spent < PERIOD_MS ? PERIOD_MS - spent : 10));
@@ -160,6 +191,8 @@ bool LookTracker::processFrame(const uint8_t* data, size_t len, int width, int h
         }
     }
     memcpy(_prev, _cur, MAX_W * MAX_H);
+
+    _last_total = total;
 
     // Require a meaningful amount of motion (≈ a person moving, not sensor noise)
     const uint32_t threshold = static_cast<uint32_t>(w) * h * 2;

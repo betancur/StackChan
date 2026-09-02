@@ -124,6 +124,7 @@ void AppClaudeBuddy::onRunning()
             mclog::tagInfo(TAG, "bridge alive");
             _linked_since_ms = now;
             noteActivity();
+            buddy::play_sfx(buddy::Sfx::LevelUp);  // connected chime
         }
     }
 
@@ -802,17 +803,22 @@ void AppClaudeBuddy::updateAttention()
 
     // Look at the person: step the yaw toward the motion centroid
     int offset = 0;
-    if (buddy::LookTracker::instance().target(offset, LOOK_TARGET_AGE_MS)) {
-        if (now - _last_look_step_ms >= LOOK_STEP_MS) {
+    auto& tracker = buddy::LookTracker::instance();
+    if (tracker.target(offset, LOOK_TARGET_AGE_MS)) {
+        _last_sweep_ms = now;  // seeing someone cancels the search sweep
+        if (now - _last_look_step_ms >= LOOK_STEP_MS && tracker.takeTarget(offset, LOOK_TARGET_AGE_MS)) {
             _last_look_step_ms = now;
-            _last_sweep_ms     = now;  // seeing someone cancels the search sweep
             if (std::abs(offset) >= 15) {
                 LvglLockGuard lock;
                 auto& motion = GetStackChan().motion();
                 if (!motion.isModifyLocked()) {
                     auto cur = motion.getCurrentAngles();
-                    int yaw  = std::clamp(cur.x + LOOK_YAW_SIGN * offset * 3, -700, 700);
-                    motion.moveWithSpeed(yaw, 320, 250);
+                    int yaw  = std::clamp(cur.x + LOOK_YAW_SIGN * offset * 4, -700, 700);
+                    mclog::tagInfo(TAG, "look: offset={} yaw {} → {}", offset, cur.x, yaw);
+                    motion.moveWithSpeed(yaw, 320, 420);
+                    buddy::LookTracker::instance().suppress(LOOK_SETTLE_MS);
+                } else {
+                    mclog::tagInfo(TAG, "look: offset={} but motion locked", offset);
                 }
             }
         }
@@ -827,6 +833,7 @@ void AppClaudeBuddy::updateAttention()
         auto& motion = GetStackChan().motion();
         if (!motion.isModifyLocked()) {
             motion.moveWithSpeed(_sweep_dir ? 380 : -380, 300, 200);
+            buddy::LookTracker::instance().suppress(LOOK_SETTLE_MS + 600);
         }
     }
 }

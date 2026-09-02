@@ -43,11 +43,11 @@ Si la solicitud lleva más de un minuto sin respuesta, el parpadeo se acelera y 
 
 ### Mirar a quien aprueba
 
-Mientras hay una solicitud pendiente, la cámara captura a unos 3 fps y calcula el centroide del movimiento por bandas verticales; la cabeza gira hacia donde hay movimiento. No usa detección de caras (no hay esp-dl en este build), así que reacciona a cualquier cosa que se mueva.
+Mientras hay una solicitud pendiente, la cámara captura a unos 3 fps y calcula el centroide del movimiento por bandas verticales; la cabeza gira hacia donde hay movimiento. Cada detección produce un solo paso de servo, y la cámara se ignora mientras la cabeza se mueve (y se rebasa la referencia al parar) para que el propio giro no cuente como movimiento. No usa detección de caras (no hay esp-dl en este build), así que reacciona a cualquier cosa que se mueva.
 
 ### Sonidos
 
-Alerta al llegar la solicitud, recordatorio en el escalado, éxito al aprobar, vibración al denegar y aviso al subir de nivel. Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake.
+Alerta al llegar la solicitud, recordatorio en el escalado, éxito al aprobar, vibración al denegar, aviso al subir de nivel y un timbre al conectar con el escritorio. Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake. Peculiaridad del CoreS3: el amplificador AW88298 solo suena si antes se ha abierto y leído el canal de entrada (ES7210) al menos una vez en ese arranque; el reproductor ceba el micrófono con tres lecturas, cierra la entrada y entonces abre la salida. Los clips llevan ganancia ×5 con limitador suave porque el driver del amplificador resta la ganancia hardware al volumen y salen muy bajos.
 
 ## Controles
 

@@ -20,6 +20,8 @@
 #include <atomic>
 #include <string_view>
 #include <vector>
+#include <algorithm>
+#include <cstdlib>
 
 namespace buddy {
 
@@ -46,6 +48,10 @@ static std::string_view clip_for(Sfx sfx)
     }
     return {};
 }
+
+static constexpr int32_t SFX_GAIN_NUM = 5;      // ×5 ≈ +14 dB before the limiter
+static constexpr int32_t SFX_GAIN_DEN = 1;
+static constexpr int32_t SFX_KNEE     = 24000;  // soft-limiter knee
 
 static std::atomic<bool> s_playing{false};
 static std::string_view s_clip;
@@ -88,21 +94,70 @@ static void play_task(void*)
     }
 
     std::vector<int16_t> pcm(max_samples);
+
+    // CoreS3 quirk: the AW88298 amp only comes up correctly when the shared
+    // duplex I2S clock is already running, which the input (ES7210) channel
+    // provides. Every working playback path on this board (Roz, mic test)
+    // opens input first, so do the same for the short clip.
+    bool input_was_enabled = audio->input_enabled();
+    if (!input_was_enabled) {
+        audio->EnableInput(true);
+    }
+    // Prime the RX DMA like the mic test does (a few reads), then close the
+    // input again before opening the output: playing with the input open
+    // works but comes out very quiet (shared duplex clock/slot layout), while
+    // Roz's record→close→play sequence plays at full volume.
+    {
+        std::vector<int16_t> prime(480 * std::max(audio->input_channels(), 1));
+        for (int i = 0; i < 3; i++) audio->InputData(prime);
+    }
+    if (!input_was_enabled) {
+        audio->EnableInput(false);
+    }
     audio->EnableOutput(true);
 
+    int packets = 0, decoded = 0, errors = 0, last_rc = 0;
+    size_t samples_out = 0;
+    int32_t peak = 0;
     roz::OggDemux demux([&](const uint8_t* data, size_t len) {
+        packets++;
         esp_audio_dec_in_raw_t  in  = {};
         esp_audio_dec_out_frame_t out = {};
         in.buffer  = const_cast<uint8_t*>(data);
         in.len     = static_cast<uint32_t>(len);
         out.buffer = reinterpret_cast<uint8_t*>(pcm.data());
         out.len    = static_cast<uint32_t>(pcm.size() * sizeof(int16_t));
-        if (esp_audio_dec_process(dec, &in, &out) == ESP_AUDIO_ERR_OK && out.decoded_size > 0) {
-            std::vector<int16_t> chunk(pcm.begin(), pcm.begin() + out.decoded_size / sizeof(int16_t));
-            audio->OutputData(chunk);
+        int rc = esp_audio_dec_process(dec, &in, &out);
+        if (rc == ESP_AUDIO_ERR_OK && out.decoded_size > 0) {
+            decoded++;
+            size_t n = out.decoded_size / sizeof(int16_t);
+            // Software gain: the CoreS3 amp path plays these short clips quietly
+            for (size_t i = 0; i < n; i++) {
+                int32_t v = static_cast<int32_t>(pcm[i]) * SFX_GAIN_NUM / SFX_GAIN_DEN;
+                // Soft knee above SFX_KNEE so the boosted clip stays loud without hard clipping
+                int32_t a = std::abs(v);
+                if (a > SFX_KNEE) {
+                    a = SFX_KNEE + (a - SFX_KNEE) / 4;
+                }
+                a         = std::min<int32_t>(a, 32767);
+                pcm[i]    = static_cast<int16_t>(v < 0 ? -a : a);
+                peak      = std::max(peak, a);
+            }
+            // Write in 20 ms pieces (480 samples), same granularity as Roz / mic test
+            for (size_t off = 0; off < n; off += 480) {
+                size_t m = std::min<size_t>(480, n - off);
+                std::vector<int16_t> chunk(pcm.begin() + off, pcm.begin() + off + m);
+                audio->OutputData(chunk);
+            }
+            samples_out += n;
+        } else {
+            errors++;
+            last_rc = rc;
         }
     });
     demux.feed(reinterpret_cast<const uint8_t*>(s_clip.data()), s_clip.size());
+    mclog::tagInfo(TAG, "clip {} B: packets={} decoded={} errors={} last_rc={} samples={} peak={} vol={}",
+                   s_clip.size(), packets, decoded, errors, last_rc, samples_out, peak, audio->output_volume());
 
     // Let the DMA drain the tail before muting
     vTaskDelay(pdMS_TO_TICKS(120));
@@ -130,8 +185,8 @@ void play_sfx(Sfx sfx)
     }
 
     TaskHandle_t h = nullptr;
-    if (xTaskCreatePinnedToCoreWithCaps(play_task, "buddy_sfx", 12 * 1024, nullptr, 4, &h, 0,
-                                        MALLOC_CAP_SPIRAM) != pdPASS) {
+    // Internal-RAM stack (like the mic test path); the decoder state lives on the heap
+    if (xTaskCreatePinnedToCore(play_task, "buddy_sfx", 10 * 1024, nullptr, 4, &h, 0) != pdPASS) {
         mclog::tagError(TAG, "sfx task create failed");
         s_playing = false;
     }
