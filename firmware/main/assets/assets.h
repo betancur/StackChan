@@ -8,6 +8,7 @@
 #include <string_view>
 
 LV_FONT_DECLARE(MontserratSemiBold26);
+LV_FONT_DECLARE(FredokaClock76);  // digits + ':' only, for the Buddy clock (assets/fonts/Fredoka-SemiBold.ttf, OFL)
 
 extern const char ogg_camera_shutter_start[] asm("_binary_camera_shutter_ogg_start");
 extern const char ogg_camera_shutter_end[] asm("_binary_camera_shutter_ogg_end");

@@ -39,7 +39,7 @@ El robot clasifica el `hint` de cada solicitud con reglas simples:
 
 ### Modo reloj
 
-Tras diez minutos sin actividad (robot en idle o dormido, sin solicitudes ni toques de pantalla) la pantalla muestra la hora en grande y la fecha. Vuelve a la cara en cuanto Claude se pone a trabajar, llega una solicitud o se toca la pantalla. El sensor de la cabeza no cuenta como actividad: se dispara solo cada pocos minutos con el movimiento de reposo de los servos.
+Tras diez minutos sin actividad (robot en idle o dormido, sin solicitudes ni toques de pantalla) la pantalla muestra la hora en grande (Fredoka SemiBold 76 px, solo dígitos, generada con `lv_font_conv` desde `main/assets/fonts/Fredoka-SemiBold.ttf`, licencia SIL OFL) y la fecha. Vuelve a la cara en cuanto Claude se pone a trabajar, llega una solicitud o se toca la pantalla. El sensor de la cabeza no cuenta como actividad: se dispara solo cada pocos minutos con el movimiento de reposo de los servos.
 
 ### Escalado
 
