@@ -54,6 +54,10 @@ Mientras hay una solicitud pendiente, la cámara captura a unos 3 fps y calcula 
 
 Clips propios estilo 8-bit sintetizados por `tools/make_buddy_sfx.py` (Ogg Opus, 16 kHz, frames de 60 ms) en `main/assets/sfx/`: timbre de dos notas al conectar, tres pings ascendentes al llegar una solicitud, tres beeps en el recordatorio, arpegio mayor al aprobar, dos notas graves al denegar y fanfarria al subir de nivel. Para cambiarlos basta editar las notas en el script y volver a ejecutarlo (necesita ffmpeg con libopus). Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake. Peculiaridad del CoreS3: el amplificador AW88298 solo suena si antes se ha abierto y leído el canal de entrada (ES7210) al menos una vez en ese arranque; el reproductor ceba el micrófono con tres lecturas, cierra la entrada y entonces abre la salida. Los clips llevan ganancia ×5 con limitador suave porque el driver del amplificador resta la ganancia hardware al volumen y salen muy bajos.
 
+### Cara kawaii
+
+Buddy activa una opción del skin por defecto (`DefaultAvatar::kawaii`): ojos blancos de 46 px con pupila negra y dos brillos, mejillas rosadas y boca corta, sobre la cara negra clásica. El parpadeo, el guiño y las emociones siguen usando el párpado, así que todos los gestos funcionan igual. Las demás apps conservan la cara original porque la opción está desactivada por defecto.
+
 ## Controles
 
 - Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones, la última línea del transcript y el gráfico de tokens por día de la última semana. Se cierra solo a los diez segundos o al tocarlo.

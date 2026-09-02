@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "default.h"
+#include <algorithm>
 
 using namespace uitk;
 using namespace uitk::lvgl_cpp;
@@ -26,8 +27,9 @@ DefaultEyes::DefaultEyes(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t s
     _container->setBgOpa(0);
     _container->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
     _container->setPadding(0, 0, 0, 0);
-    _container->setTransformPivot(_eye_size_limit.y / 2, _eye_size_limit.y / 2);
-    _container->setSize(_eye_size_limit.y, _eye_size_limit.y);
+    _max_eye_px = _eye_size_limit.y;
+    _container->setTransformPivot(_max_eye_px / 2, _max_eye_px / 2);
+    _container->setSize(_max_eye_px, _max_eye_px);
 
     _eye = std::make_unique<Container>(_container->get());
     _eye->setRadius(LV_RADIUS_CIRCLE);
@@ -52,8 +54,68 @@ DefaultEyes::DefaultEyes(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t s
 DefaultEyes::~DefaultEyes()
 {
     _eyelid.reset();
+    _shine_small.reset();
+    _shine_big.reset();
+    _pupil.reset();
     _eye.reset();
     _container.reset();
+}
+
+void DefaultEyes::setKawaii(int eyeSizePx, bool pupil, lv_color_t pupilColor, lv_color_t shineColor)
+{
+    // size 0 (neutral) must map to eyeSizePx: limits are [min, max] with the
+    // neutral size at the midpoint. The eyelid is a sibling created after the
+    // eye, so it keeps covering pupil and highlights when blinking.
+    _max_eye_px = 2 * eyeSizePx - _eye_size_limit.x;
+    _container->setTransformPivot(_max_eye_px / 2, _max_eye_px / 2);
+    _container->setSize(_max_eye_px, _max_eye_px);
+
+    auto make_dot = [&](lv_color_t color) {
+        auto dot = std::make_unique<Container>(_eye->get());
+        dot->setRadius(LV_RADIUS_CIRCLE);
+        dot->setBorderWidth(0);
+        dot->setBgColor(color);
+        dot->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+        dot->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+        return dot;
+    };
+    if (pupil) {
+        _pupil = make_dot(pupilColor);
+    }
+    _shine_big   = make_dot(shineColor);
+    _shine_small = make_dot(shineColor);
+
+    // Recompute eye geometry with the new maximum; setSize() lays the shines out
+    setSize(getSize());
+    setWeight(getWeight());
+    setPosition(_position);
+}
+
+void DefaultEyes::layout_shines(int eye_size)
+{
+    if (!_shine_big || !_shine_small) {
+        return;
+    }
+    // With a pupil: pupil ≈ 58% of the eye, slightly low; highlights live inside it.
+    // Without: highlights sit on the eye itself. Same side on both eyes (one light).
+    if (_pupil) {
+        int p = std::max(6, eye_size * 62 / 100);
+        _pupil->setSize(p, p);
+        _pupil->align(LV_ALIGN_CENTER, 0, eye_size * 6 / 100);
+        int big   = std::max(4, eye_size * 20 / 100);
+        int small = std::max(2, eye_size * 9 / 100);
+        _shine_big->setSize(big, big);
+        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 12 / 100, -eye_size * 8 / 100);
+        _shine_small->setSize(small, small);
+        _shine_small->align(LV_ALIGN_CENTER, eye_size * 14 / 100, eye_size * 18 / 100);
+    } else {
+        int big   = std::max(4, eye_size * 32 / 100);
+        int small = std::max(2, eye_size * 14 / 100);
+        _shine_big->setSize(big, big);
+        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 22 / 100, -eye_size * 22 / 100);
+        _shine_small->setSize(small, small);
+        _shine_small->align(LV_ALIGN_CENTER, eye_size * 24 / 100, eye_size * 26 / 100);
+    }
 }
 
 void DefaultEyes::setPosition(const Vector2i& position)
@@ -134,10 +196,11 @@ void DefaultEyes::setSize(int size)
 {
     Feature::setSize(size);
 
-    int eye_size = map_range(_size, -100, 100, _eye_size_limit.x, _eye_size_limit.y);
+    int eye_size = map_range(_size, -100, 100, _eye_size_limit.x, _max_eye_px);
 
     _eye->setSize(eye_size, eye_size);
     _eyelid->setSize(eye_size, eye_size);
+    layout_shines(eye_size);
 
     // Force eyelid update
     setWeight(getWeight());

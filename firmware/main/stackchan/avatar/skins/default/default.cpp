@@ -18,9 +18,36 @@ void DefaultAvatar::init(lv_obj_t* parent, const lv_font_t* font)
     _pannel->setBgColor(secondaryColor);
     _pannel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-    _key_elements.leftEye  = std::make_unique<DefaultEyes>(_pannel->get(), primaryColor, secondaryColor, true);
-    _key_elements.rightEye = std::make_unique<DefaultEyes>(_pannel->get(), primaryColor, secondaryColor, false);
-    _key_elements.mouth    = std::make_unique<DefaultMouth>(_pannel->get(), primaryColor, secondaryColor);
+    if (kawaii.enabled) {
+        // Blush marks sit under the eyes; create them first so eyes draw on top
+        auto make_blush = [&](int x) {
+            auto b = std::make_unique<Container>(_pannel->get());
+            b->setSize(30, 12);
+            b->setRadius(LV_RADIUS_CIRCLE);
+            b->setBorderWidth(0);
+            b->setBgColor(kawaii.blushColor);
+            b->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+            b->removeFlag(LV_OBJ_FLAG_CLICKABLE);
+            b->align(LV_ALIGN_CENTER, x, 16);
+            return b;
+        };
+        _blush_left  = make_blush(-82);
+        _blush_right = make_blush(82);
+    }
+
+    auto left_eye  = std::make_unique<DefaultEyes>(_pannel->get(), primaryColor, secondaryColor, true);
+    auto right_eye = std::make_unique<DefaultEyes>(_pannel->get(), primaryColor, secondaryColor, false);
+    if (kawaii.enabled) {
+        left_eye->setKawaii(kawaii.eyeSizePx, kawaii.pupil, kawaii.pupilColor, kawaii.shineColor);
+        right_eye->setKawaii(kawaii.eyeSizePx, kawaii.pupil, kawaii.pupilColor, kawaii.shineColor);
+    }
+    _key_elements.leftEye  = std::move(left_eye);
+    _key_elements.rightEye = std::move(right_eye);
+    auto mouth = std::make_unique<DefaultMouth>(_pannel->get(), primaryColor, secondaryColor);
+    if (kawaii.enabled) {
+        mouth->setKawaii(kawaii.mouthWidthPx);
+    }
+    _key_elements.mouth = std::move(mouth);
     _key_elements.speechBubble =
         std::make_unique<DefaultSpeechBubble>(_pannel->get(), primaryColor, secondaryColor, font);
 }

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "default.h"
+#include <algorithm>
 
 using namespace uitk;
 using namespace uitk::lvgl_cpp;
@@ -35,6 +36,13 @@ DefaultMouth::~DefaultMouth()
     _mouth.reset();
 }
 
+void DefaultMouth::setKawaii(int closedWidthPx)
+{
+    _closed_width = closedWidthPx;
+    _open_width   = std::max(closedWidthPx, closedWidthPx * 110 / 100);
+    setWeight(getWeight());
+}
+
 void DefaultMouth::setPosition(const Vector2i& position)
 {
     Element::setPosition(position);
@@ -49,7 +57,7 @@ void DefaultMouth::setWeight(int weight)
 {
     Feature::setWeight(weight);
 
-    auto size_x = map_range(_weight, 0, 100, _mouth_min_size.x, _mouth_max_size.x);
+    auto size_x = map_range(_weight, 0, 100, _closed_width, _open_width);
     auto size_y = map_range(_weight, 0, 100, _mouth_min_size.y, _mouth_max_size.y);
     auto radius = map_range(_weight, 0, 100, _mouth_min_radius, _mouth_max_radius);
 

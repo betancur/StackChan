@@ -57,6 +57,14 @@ void AppClaudeBuddy::onOpen()
         LvglLockGuard lock;
 
         auto avatar = std::make_unique<avatar::DefaultAvatar>();
+        // Kawaii look on the classic dark face: big white eyes with a dark pupil,
+        // two highlights, and blush marks
+        avatar->kawaii.enabled    = true;
+        avatar->kawaii.eyeSizePx  = 46;
+        avatar->kawaii.pupil      = true;
+        avatar->kawaii.pupilColor = lv_color_black();
+        avatar->kawaii.shineColor = lv_color_white();
+        avatar->kawaii.blushColor = lv_color_hex(0xE07A8A);
         avatar->init(lv_screen_active());
         avatar->getPanel()->onClick().connect([this]() { _screen_clicked = true; });
         GetStackChan().attachAvatar(std::move(avatar));
