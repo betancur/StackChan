@@ -199,4 +199,5 @@ private:
     static constexpr int      LOOK_YAW_SIGN       = 1;  // flip if the head turns away from the person
     static constexpr uint32_t THEME_PRIMARY       = 0xD97757;  // Claude orange
     static constexpr uint32_t THEME_DARK          = 0x3A2418;
+    static constexpr uint32_t CLOCK_COLOR         = 0x5AB0FF;  // light blue clock digits
 };
