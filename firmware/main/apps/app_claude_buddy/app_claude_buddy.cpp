@@ -124,7 +124,7 @@ void AppClaudeBuddy::onRunning()
         } else {
             mclog::tagInfo(TAG, "bridge alive");
             _linked_since_ms = now;
-            noteActivity();
+            noteActivity("bridge alive");
             buddy::play_sfx(buddy::Sfx::Connect);
         }
     }
@@ -136,7 +136,7 @@ void AppClaudeBuddy::onRunning()
         if (st != _last_link_status || pf != _last_pair_failures) {
             _last_link_status   = st;
             _last_pair_failures = pf;
-            noteActivity();
+            noteActivity("link status");
             LvglLockGuard lock;
             refreshSpeech();
         }
@@ -147,7 +147,7 @@ void AppClaudeBuddy::onRunning()
         uint32_t pk = link.pendingPasskey();
         if (pk != _shown_passkey) {
             _shown_passkey = pk;
-            noteActivity();
+            noteActivity("passkey");
             LvglLockGuard lock;
             showPasskey(pk);
         }
@@ -160,8 +160,11 @@ void AppClaudeBuddy::onRunning()
     bool deny_click    = _deny_clicked.exchange(false);
     bool overlay_click = _overlay_clicked.exchange(false);
 
-    if (screen_click || head_pressed || approve_click || deny_click || overlay_click) {
-        noteActivity();
+    // The capacitive head sensor fires on its own every few minutes (servo idle
+    // motion), so head touches do not count as activity for the clock/dim timers.
+    if (screen_click || approve_click || deny_click || overlay_click) {
+        noteActivity(screen_click ? "screen tap" : approve_click ? "approve btn" : deny_click ? "deny btn"
+                                                                                                : "overlay tap");
         if (_clock_shown) {
             LvglLockGuard lock;
             showClock(false);
@@ -213,8 +216,16 @@ void AppClaudeBuddy::onRunning()
 
     // ── Clock mode: nothing happening for a while → show the time ───────────
     {
+        // Signed, fresh-clock difference: noteActivity() may have stamped a time
+        // later than this loop's `now`, and an unsigned wrap would flash the clock.
+        int32_t idle_ms = static_cast<int32_t>(GetHAL().millis() - _last_activity_ms);
         bool quiet = (_mood == Mood::Idle || _mood == Mood::Sleep) && !_snap.prompt.present &&
-                     (now - _last_activity_ms) >= CLOCK_AFTER_MS && localDate() != 0;
+                     idle_ms >= static_cast<int32_t>(CLOCK_AFTER_MS) && localDate() != 0;
+        if (now - _idle_log_tick >= 5 * 60000) {
+            _idle_log_tick = now;
+            mclog::tagInfo(TAG, "idle check: mood={} prompt={} idle_for={}s clock={}", moodName(_mood),
+                           _snap.prompt.present, idle_ms / 1000, _clock_shown);
+        }
         if (quiet != _clock_shown) {
             LvglLockGuard lock;
             showClock(quiet);
@@ -1286,8 +1297,9 @@ uint32_t AppClaudeBuddy::localDate()
 
 // ── Sleep / backlight ─────────────────────────────────────────────────────────
 
-void AppClaudeBuddy::noteActivity()
+void AppClaudeBuddy::noteActivity(const char* reason)
 {
+    mclog::tagInfo(TAG, "activity: {}", reason);
     _last_activity_ms = GetHAL().millis();
     if (_dimmed) {
         _dimmed = false;
@@ -1302,7 +1314,7 @@ void AppClaudeBuddy::checkDim()
         if (_dimmed) noteActivity();
         return;
     }
-    if (!_dimmed && GetHAL().millis() - _last_activity_ms >= DIM_AFTER_MS) {
+    if (!_dimmed && static_cast<int32_t>(GetHAL().millis() - _last_activity_ms) >= static_cast<int32_t>(DIM_AFTER_MS)) {
         _dimmed = true;
         GetHAL().setBackLightBrightness(20);
     }

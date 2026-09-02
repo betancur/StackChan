@@ -99,7 +99,7 @@ private:
     static uint32_t localDate();  // yyyymmdd, 0 if the clock is not set
 
     // ── Sleep / backlight ─────────────────────────────────────────────────────
-    void noteActivity();
+    void noteActivity(const char* reason = "?");
     void checkDim();
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -174,6 +174,7 @@ private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _clock_date;
     bool     _clock_shown   = false;
     uint32_t _clock_tick    = 0;
+    uint32_t _idle_log_tick = 0;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _pair_panel;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_title;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_code;
