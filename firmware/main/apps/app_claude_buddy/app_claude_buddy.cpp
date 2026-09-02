@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #include <cstdio>
 #include <cctype>
+#include <algorithm>
 #include <cstdlib>
 #include <cmath>
 #include <ctime>
@@ -126,6 +127,19 @@ void AppClaudeBuddy::onRunning()
         }
     }
 
+    // ── Link status feedback (speech bubble while asleep) ────────────────────
+    {
+        int st = static_cast<int>(link.linkStatus());
+        int pf = link.pairFailures();
+        if (st != _last_link_status || pf != _last_pair_failures) {
+            _last_link_status   = st;
+            _last_pair_failures = pf;
+            noteActivity();
+            LvglLockGuard lock;
+            refreshSpeech();
+        }
+    }
+
     // ── Pairing passkey ──────────────────────────────────────────────────────
     {
         uint32_t pk = link.pendingPasskey();
@@ -149,7 +163,15 @@ void AppClaudeBuddy::onRunning()
     }
 
     if (_snap.prompt.present) {
-        if (approve_click || head_pressed) decide(true);
+        // Head-pet approves only for non-dangerous prompts, and never in the first
+        // 1.5 s (the "look up" servo move can tickle the capacitive head sensor).
+        bool head_ok = head_pressed && _prompt_risk != Risk::Danger &&
+                       (now - _prompt_seen_ms) >= HEAD_APPROVE_GRACE_MS;
+        if (head_pressed && !head_ok) {
+            mclog::tagInfo(TAG, "head touch ignored ({})",
+                           _prompt_risk == Risk::Danger ? "danger prompt: use the button" : "too soon after prompt");
+        }
+        if (approve_click || head_ok) decide(true);
         else if (deny_click) decide(false);
     }
 
@@ -182,6 +204,11 @@ void AppClaudeBuddy::onRunning()
     // ── Resolve effective mood ───────────────────────────────────────────────
     setMood(_transient_active ? _transient : baseMood());
 
+    // ── Attention: escalation + look at the person ───────────────────────────
+    if (_mood == Mood::Attention && _snap.prompt.present) {
+        updateAttention();
+    }
+
     // ── Animations ───────────────────────────────────────────────────────────
     updateLeds();
     updateCelebrateWiggle();
@@ -203,6 +230,7 @@ void AppClaudeBuddy::onClose()
     GetHAL().onHeadPetGesture.disconnect(_head_touch_conn);
     _head_touch_conn = -1;
 
+    buddy::LookTracker::instance().stop();
     GetHAL().showRgbColor(0, 0, 0);
     if (_dimmed) {
         GetHAL().setBackLightBrightness(75);
@@ -289,9 +317,18 @@ void AppClaudeBuddy::handleSnapshot(JsonObjectConst doc)
     // Track when a given prompt was first shown (for the 5 s "heart" reward)
     if (s.prompt.present) {
         if (s.prompt.id != _prompt_seen_id) {
-            _prompt_seen_id = s.prompt.id;
-            _prompt_seen_ms = now;
-            mclog::tagInfo(TAG, "approval pending: {} — {}", s.prompt.tool, s.prompt.hint);
+            _prompt_seen_id   = s.prompt.id;
+            _prompt_seen_ms   = now;
+            _last_reminder_ms = now;
+            _prompt_risk      = assessRisk(s.prompt.tool, s.prompt.hint);
+            mclog::tagInfo(TAG, "approval pending ({}): {} — {}",
+                           _prompt_risk == Risk::Danger ? "DANGER" : _prompt_risk == Risk::Caution ? "caution" : "ok",
+                           s.prompt.tool, s.prompt.hint);
+            buddy::play_sfx(buddy::Sfx::Attention);
+            if (_mood == Mood::Attention) {
+                _snap.prompt = s.prompt;
+                setMood(Mood::Attention, true);  // re-style for the new prompt's risk
+            }
         }
     } else {
         _prompt_seen_id.clear();
@@ -304,6 +341,7 @@ void AppClaudeBuddy::handleSnapshot(JsonObjectConst doc)
     } else if (lvl > _level) {
         _level = lvl;
         mclog::tagInfo(TAG, "level up → {}", lvl);
+        buddy::play_sfx(buddy::Sfx::LevelUp);
         startTransient(Mood::Celebrate, TRANSIENT_MS);
     }
 
@@ -468,6 +506,7 @@ void AppClaudeBuddy::decide(bool approve)
     mclog::tagInfo(TAG, "{} {} after {} ms", approve ? "APPROVE" : "DENY", _snap.prompt.id, reaction);
 
     sendPermission(_snap.prompt.id, approve);
+    buddy::play_sfx(approve ? buddy::Sfx::Approve : buddy::Sfx::Deny);
 
     if (approve) {
         _store.appr++;
@@ -521,7 +560,19 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
         return;
     }
     mclog::tagInfo(TAG, "mood {} → {}", moodName(_mood), moodName(mood));
-    _mood = mood;
+    bool was_attention = (_mood == Mood::Attention);
+    _mood              = mood;
+
+    // Camera tracker lives only while a prompt is pending (outside the LVGL lock:
+    // stop() waits for an in-flight capture)
+    if (was_attention && mood != Mood::Attention) {
+        buddy::LookTracker::instance().stop();
+    }
+    if (mood == Mood::Attention && !was_attention) {
+        buddy::LookTracker::instance().start();
+        _last_look_step_ms = 0;
+        _last_sweep_ms     = GetHAL().millis();
+    }
 
     LvglLockGuard lock;
     auto& sc = GetStackChan();
@@ -553,9 +604,22 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             break;  // LEDs: breathing blue in updateLeds()
 
         case Mood::Attention:
-            av.setEmotion(avatar::Emotion::Doubt);
+            switch (_prompt_risk) {
+                case Risk::Danger:
+                    av.setEmotion(avatar::Emotion::Sad);
+                    av.mouth().setWeight(30);
+                    _sweat_id = av.addDecorator(std::make_unique<avatar::SweatDecorator>(lv_screen_active(), 0, 400));
+                    break;
+                case Risk::Caution:
+                    av.setEmotion(avatar::Emotion::Doubt);
+                    _sweat_id = av.addDecorator(std::make_unique<avatar::SweatDecorator>(lv_screen_active(), 0, 700));
+                    break;
+                case Risk::None:
+                    av.setEmotion(avatar::Emotion::Doubt);
+                    break;
+            }
             sc.motion().moveWithSpeed(0, 320, 300);  // look up at the user
-            break;  // LEDs: orange blink in updateLeds()
+            break;  // LEDs: blink by risk in updateLeds()
 
         case Mood::Celebrate:
             av.setEmotion(avatar::Emotion::Happy);
@@ -582,12 +646,43 @@ void AppClaudeBuddy::refreshSpeech()
     auto& av = sc.avatar();
 
     switch (_mood) {
-        case Mood::Sleep:
-            av.setSpeech(buddy::BuddyLink::instance().isConnected() ? "Zzz..." : "Zzz  (waiting for Claude)");
+        case Mood::Sleep: {
+            auto& link = buddy::BuddyLink::instance();
+            if (link.pendingPasskey() != 0) {
+                av.setSpeech("Type this code on your Mac");
+                return;
+            }
+            switch (link.linkStatus()) {
+                case buddy::LinkStatus::Advertising:
+                    av.setSpeech("Zzz  (waiting for Claude)");
+                    break;
+                case buddy::LinkStatus::Connected:
+                    av.setSpeech("Mac connected, securing link...");
+                    break;
+                case buddy::LinkStatus::Encrypted:
+                    av.setSpeech("Secure link up, waiting for data...");
+                    break;
+                case buddy::LinkStatus::PairFailed: {
+                    char buf[48];
+                    snprintf(buf, sizeof(buf), "Pairing failed %d/3\nold key on the Mac?", link.pairFailures());
+                    av.setSpeech(buf);
+                    break;
+                }
+                case buddy::LinkStatus::IdentityRotated:
+                    av.setSpeech("New identity!\nConnect me again on the Mac");
+                    break;
+            }
             return;
+        }
         case Mood::Attention:
             if (_snap.prompt.present) {
-                std::string t = _snap.prompt.tool.empty() ? "Approve?" : ("Approve " + _snap.prompt.tool + "?");
+                std::string tool = _snap.prompt.tool.empty() ? "this" : _snap.prompt.tool;
+                std::string t;
+                switch (_prompt_risk) {
+                    case Risk::Danger:  t = "DANGER! " + tool; break;
+                    case Risk::Caution: t = "Careful: " + tool + "?"; break;
+                    case Risk::None:    t = "Approve " + tool + "?"; break;
+                }
                 if (!_snap.prompt.hint.empty()) t += "\n" + fit(_snap.prompt.hint, 36);
                 av.setSpeech(t);
             } else {
@@ -651,9 +746,18 @@ void AppClaudeBuddy::updateLeds()
             break;
         }
         case Mood::Attention: {
-            bool on = ((now / 400) % 2) == 0;
-            if (on) GetHAL().showRgbColor(90, 40, 0);
-            else    GetHAL().showRgbColor(0, 0, 0);
+            bool escalated  = (now - _prompt_seen_ms) >= ESCALATE_AFTER_MS;
+            uint32_t period = escalated ? 180 : 400;
+            bool on         = ((now / period) % 2) == 0;
+            if (!on) {
+                GetHAL().showRgbColor(0, 0, 0);
+            } else if (_prompt_risk == Risk::Danger) {
+                GetHAL().showRgbColor(110, 0, 0);
+            } else if (_prompt_risk == Risk::Caution) {
+                GetHAL().showRgbColor(100, 18, 0);
+            } else {
+                GetHAL().showRgbColor(90, 40, 0);
+            }
             break;
         }
         case Mood::Celebrate: {
@@ -681,6 +785,74 @@ void AppClaudeBuddy::updateCelebrateWiggle()
     _wiggle_phase = !_wiggle_phase;
     LvglLockGuard lock;
     GetStackChan().motion().moveWithSpeed(_wiggle_phase ? 260 : -260, 220, 450);
+}
+
+void AppClaudeBuddy::updateAttention()
+{
+    uint32_t now      = GetHAL().millis();
+    uint32_t elapsed  = now - _prompt_seen_ms;
+    bool     escalated = elapsed >= ESCALATE_AFTER_MS;
+
+    // Escalation: nag every 30 s once the prompt has been ignored for a minute
+    if (escalated && now - _last_reminder_ms >= REMINDER_EVERY_MS) {
+        _last_reminder_ms = now;
+        mclog::tagInfo(TAG, "prompt unanswered for {} s — reminding", elapsed / 1000);
+        buddy::play_sfx(buddy::Sfx::Reminder);
+    }
+
+    // Look at the person: step the yaw toward the motion centroid
+    int offset = 0;
+    if (buddy::LookTracker::instance().target(offset, LOOK_TARGET_AGE_MS)) {
+        if (now - _last_look_step_ms >= LOOK_STEP_MS) {
+            _last_look_step_ms = now;
+            _last_sweep_ms     = now;  // seeing someone cancels the search sweep
+            if (std::abs(offset) >= 15) {
+                LvglLockGuard lock;
+                auto& motion = GetStackChan().motion();
+                if (!motion.isModifyLocked()) {
+                    auto cur = motion.getCurrentAngles();
+                    int yaw  = std::clamp(cur.x + LOOK_YAW_SIGN * offset * 3, -700, 700);
+                    motion.moveWithSpeed(yaw, 320, 250);
+                }
+            }
+        }
+        return;
+    }
+
+    // Nobody seen for a while and the prompt is stale: sweep left/right looking for them
+    if (escalated && now - _last_sweep_ms >= SWEEP_EVERY_MS) {
+        _last_sweep_ms = now;
+        _sweep_dir     = !_sweep_dir;
+        LvglLockGuard lock;
+        auto& motion = GetStackChan().motion();
+        if (!motion.isModifyLocked()) {
+            motion.moveWithSpeed(_sweep_dir ? 380 : -380, 300, 200);
+        }
+    }
+}
+
+AppClaudeBuddy::Risk AppClaudeBuddy::assessRisk(const std::string& tool, const std::string& hint)
+{
+    std::string s = tool + " " + hint;
+    for (auto& c : s) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    auto has = [&](const char* needle) { return s.find(needle) != std::string::npos; };
+
+    static const char* danger[] = {
+        "rm -rf", "rm -r ", "rm -fr", "rmdir", "git push --force", "push -f", "--force", "git reset --hard",
+        "git clean -f", "drop table", "drop database", "delete from", "truncate", "mkfs", "dd if=", "> /dev/",
+        "chmod -r 777", "chown -r", "kill -9", "killall", "shutdown", "reboot", "curl | sh", "curl | bash",
+        "wget | sh", "| sudo", "sudo rm", ":(){", "format c:", "del /s", "rd /s", "terraform destroy",
+        "kubectl delete", "docker system prune", "docker rm", "nvs_flash_erase", "factory reset",
+    };
+    static const char* caution[] = {
+        "sudo", "git push", "git commit", "git rebase", "git checkout .", "git stash", "npm publish", "pip install",
+        "npm install", "brew install", "apt install", "cargo publish", "idf.py flash", "esptool", "write_flash",
+        "erase_flash", "ssh ", "scp ", "rsync", "chmod", "chown", "mv ", "kubectl apply", "docker run",
+        "systemctl", "launchctl", "crontab", "> ~/", ">> ~/", "curl -x post", "curl -d",
+    };
+    for (auto* n : danger)  if (has(n)) return Risk::Danger;
+    for (auto* n : caution) if (has(n)) return Risk::Caution;
+    return Risk::None;
 }
 
 const char* AppClaudeBuddy::moodName(Mood m)
@@ -857,6 +1029,10 @@ void AppClaudeBuddy::refreshOverlay()
              _store.nap);
     t += buf;
 
+    if (_snap.prompt.present) {
+        t += std::string(_prompt_risk == Risk::Danger ? "!! DANGER " : _prompt_risk == Risk::Caution ? "! Careful " : "? ") +
+             fit(_snap.prompt.tool + " " + _snap.prompt.hint, 40) + "\n";
+    }
     if (!_snap.msg.empty()) t += "> " + fit(_snap.msg, 44) + "\n";
     for (const auto& e : _snap.entries) {
         t += "  " + fit(e, 44) + "\n";

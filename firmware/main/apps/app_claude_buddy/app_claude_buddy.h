@@ -20,6 +20,8 @@
 #pragma once
 #include "buddy_link.h"
 #include "buddy_store.h"
+#include "buddy_sfx.h"
+#include "buddy_look.h"
 #include <mooncake.h>
 #include <smooth_lvgl.hpp>
 #include <ArduinoJson.hpp>
@@ -39,6 +41,7 @@ public:
 
 private:
     enum class Mood { Sleep, Idle, Busy, Attention, Celebrate, Heart };
+    enum class Risk { None, Caution, Danger };
 
     struct Prompt {
         bool present = false;
@@ -75,6 +78,8 @@ private:
     void startTransient(Mood mood, uint32_t durationMs);
     void refreshSpeech();
     void updateLeds();
+    void updateAttention();
+    static Risk assessRisk(const std::string& tool, const std::string& hint);
     void updateCelebrateWiggle();
     void clearTransientModifiers();
     static const char* moodName(Mood m);
@@ -98,6 +103,8 @@ private:
     bool _has_snapshot        = false;
     uint32_t _last_snapshot_ms = 0;
     bool _was_linked          = false;  // last computed "bridge alive" value
+    int  _last_link_status    = -1;
+    int  _last_pair_failures  = 0;
     uint32_t _linked_since_ms = 0;
 
     Mood _mood            = Mood::Sleep;
@@ -108,6 +115,13 @@ private:
     int _level            = -1;  // -1 = not yet baselined
     uint32_t _prompt_seen_ms = 0;
     std::string _prompt_seen_id;
+    Risk _prompt_risk     = Risk::None;
+
+    // Attention escalation / look-at
+    uint32_t _last_reminder_ms  = 0;
+    uint32_t _last_look_step_ms = 0;
+    uint32_t _last_sweep_ms     = 0;
+    bool     _sweep_dir         = false;
 
     std::string _turn_text;
     uint32_t _turn_until = 0;
@@ -150,10 +164,17 @@ private:
     static constexpr uint32_t LINK_TIMEOUT_MS     = 30 * 1000;   // spec: dead if no snapshot in ~30 s
     static constexpr uint32_t TRANSIENT_MS        = 3200;
     static constexpr uint32_t FAST_APPROVE_MS     = 5000;
+    static constexpr uint32_t HEAD_APPROVE_GRACE_MS = 1500;
     static constexpr uint32_t TURN_SHOW_MS        = 7000;
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
     static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
+    static constexpr uint32_t ESCALATE_AFTER_MS   = 60 * 1000;  // prompt unanswered → escalate
+    static constexpr uint32_t REMINDER_EVERY_MS   = 30 * 1000;
+    static constexpr uint32_t LOOK_STEP_MS        = 600;
+    static constexpr uint32_t LOOK_TARGET_AGE_MS  = 2000;
+    static constexpr uint32_t SWEEP_EVERY_MS      = 2500;
+    static constexpr int      LOOK_YAW_SIGN       = 1;  // flip if the head turns away from the person
     static constexpr uint32_t THEME_PRIMARY       = 0xD97757;  // Claude orange
     static constexpr uint32_t THEME_DARK          = 0x3A2418;
 };

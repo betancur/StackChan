@@ -196,6 +196,17 @@ void ble_prph_set_passkey_callback(ble_prph_passkey_cb_t cb);
 /** True when the current connection is encrypted. */
 bool ble_prph_is_encrypted(void);
 
+/** Link lifecycle events (NUS mode), for user-facing status. */
+typedef enum {
+    BLE_PRPH_EVT_CONNECTED = 0,
+    BLE_PRPH_EVT_DISCONNECTED,
+    BLE_PRPH_EVT_ENC_OK,
+    BLE_PRPH_EVT_ENC_FAIL,          /* arg = consecutive failures */
+    BLE_PRPH_EVT_IDENTITY_ROTATED,  /* peer must pair again */
+} ble_prph_link_event_t;
+typedef void (*ble_prph_link_cb_t)(ble_prph_link_event_t evt, int arg);
+void ble_prph_set_link_callback(ble_prph_link_cb_t cb);
+
 #ifdef __cplusplus
 }
 #endif

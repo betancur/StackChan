@@ -18,9 +18,26 @@
 
 namespace buddy {
 
+enum class LinkStatus {
+    Advertising,      // nobody connected
+    Connected,        // GATT connection, not yet encrypted
+    Encrypted,        // bonded & encrypted
+    PairFailed,       // encryption failed (see pairFailures())
+    IdentityRotated,  // we changed address: the desktop must connect/pair again
+};
+
 class BuddyLink {
 public:
     static BuddyLink& instance();
+
+    LinkStatus linkStatus() const
+    {
+        return static_cast<LinkStatus>(_status.load());
+    }
+    int pairFailures() const
+    {
+        return _fail_count.load();
+    }
 
     /// Start the NUS BLE peripheral. Can only be called once per boot.
     void start(std::string_view deviceName);
@@ -59,6 +76,7 @@ private:
     BuddyLink() = default;
     static void rx_trampoline(const uint8_t* data, uint16_t len);
     static void passkey_trampoline(uint32_t passkey, bool show);
+    static void link_trampoline(int evt, int arg);
     void onRx(const uint8_t* data, uint16_t len);
 
     static constexpr size_t MAX_LINE_BYTES = 8 * 1024;  // spec: events > 4 KB are dropped upstream
@@ -71,6 +89,8 @@ private:
     uint32_t _dropped = 0;
     bool _started     = false;
     std::atomic<uint32_t> _passkey{0};
+    std::atomic<int> _status{0};
+    std::atomic<int> _fail_count{0};
 };
 
 }  // namespace buddy

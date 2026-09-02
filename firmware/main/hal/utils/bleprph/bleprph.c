@@ -82,6 +82,82 @@ static uint16_t bearers;
 static bool s_use_alt_uuid       = false;
 static ble_prph_mode_t s_mode    = BLE_PRPH_MODE_STACKCHAN;
 static ble_prph_passkey_cb_t s_passkey_cb = NULL;
+static ble_prph_link_cb_t s_link_cb       = NULL;
+static int s_enc_fail_streak = 0;
+
+void ble_prph_set_link_callback(ble_prph_link_cb_t cb)
+{
+    s_link_cb = cb;
+}
+
+static void link_emit(ble_prph_link_event_t evt, int arg)
+{
+    if (s_link_cb) {
+        s_link_cb(evt, arg);
+    }
+}
+
+/* Stale-bond recovery: if the peer keeps trying to encrypt with a key we no
+ * longer hold, it will never re-pair on its own. Switching to a fresh random
+ * static address makes the peer see a brand-new device and pair again. */
+#define ENC_FAIL_ROTATE_THRESHOLD 3
+#define IDENTITY_NVS_NS  "buddy_ble"
+#define IDENTITY_NVS_KEY "rnd_addr"
+
+/* Persisted so the peer keeps recognising us across reboots (its bond is tied
+ * to this address). Returns true if a stored address was applied. */
+static bool bleprph_apply_stored_identity(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(IDENTITY_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return false;
+    }
+    uint8_t val[6];
+    size_t len = sizeof(val);
+    esp_err_t err = nvs_get_blob(h, IDENTITY_NVS_KEY, val, &len);
+    nvs_close(h);
+    if (err != ESP_OK || len != sizeof(val)) {
+        return false;
+    }
+    int rc = ble_hs_id_set_rnd(val);
+    if (rc != 0) {
+        MODLOG_DFLT(ERROR, "stored identity: ble_hs_id_set_rnd rc=%d", rc);
+        return false;
+    }
+    own_addr_type = BLE_OWN_ADDR_RANDOM;
+    MODLOG_DFLT(INFO, "using stored random static identity");
+    return true;
+}
+
+static void bleprph_rotate_identity(void)
+{
+    uint8_t val[6];
+    esp_fill_random(val, sizeof(val));
+    val[5] |= 0xC0;  /* static random address: two MSBs set */
+
+    /* The controller rejects a random-address change while advertising
+     * (HCI Command Disallowed = rc 524). A failed connection attempt and a
+     * disconnect can both restart advertising, so stop it explicitly first;
+     * the caller restarts it right after. */
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+    }
+    int rc = ble_hs_id_set_rnd(val);
+    if (rc != 0) {
+        MODLOG_DFLT(ERROR, "identity rotate: ble_hs_id_set_rnd rc=%d", rc);
+        return;
+    }
+    own_addr_type = BLE_OWN_ADDR_RANDOM;
+
+    nvs_handle_t h;
+    if (nvs_open(IDENTITY_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, IDENTITY_NVS_KEY, val, sizeof(val));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    MODLOG_DFLT(ERROR, "identity rotated to random static address (stale bond on peer); pair again");
+    link_emit(BLE_PRPH_EVT_IDENTITY_ROTATED, 0);
+}
 
 void ble_prph_set_passkey_callback(ble_prph_passkey_cb_t cb)
 {
@@ -386,6 +462,7 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                 assert(rc == 0);
                 bleprph_print_conn_desc(&desc);
                 stackchan_ble_set_conn_handle(event->connect.conn_handle);
+                link_emit(BLE_PRPH_EVT_CONNECTED, 0);
                 if (s_mode == BLE_PRPH_MODE_NUS) {
                     /* Ask the central to pair/encrypt now instead of waiting for
                      * the first GATT access to fail with insufficient auth. */
@@ -416,6 +493,11 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             nus_svc_on_disconnect();
             if (s_passkey_cb) {
                 s_passkey_cb(0, false);
+            }
+            link_emit(BLE_PRPH_EVT_DISCONNECTED, 0);
+            if (s_mode == BLE_PRPH_MODE_NUS && s_enc_fail_streak >= ENC_FAIL_ROTATE_THRESHOLD) {
+                s_enc_fail_streak = 0;
+                bleprph_rotate_identity();  /* must happen while not advertising */
             }
             MODLOG_DFLT(INFO, "\n");
 
@@ -455,12 +537,30 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             if (s_passkey_cb) {
                 s_passkey_cb(0, false);
             }
+            if (event->enc_change.status == 0) {
+                s_enc_fail_streak = 0;
+                link_emit(BLE_PRPH_EVT_ENC_OK, 0);
+            } else if (s_mode == BLE_PRPH_MODE_NUS && desc.sec_state.encrypted) {
+                /* Transient: e.g. our own Security Request timing out (status 13)
+                 * because the peer had already encrypted via its LTK. Link is
+                 * fine, so do not count it toward identity rotation. */
+                MODLOG_DFLT(INFO, "ignoring security procedure failure (status=%d): link already encrypted",
+                            event->enc_change.status);
+                return 0;
+            } else if (s_mode == BLE_PRPH_MODE_NUS) {
+                s_enc_fail_streak++;
+                link_emit(BLE_PRPH_EVT_ENC_FAIL, s_enc_fail_streak);
+            }
             if (event->enc_change.status != 0 && s_mode == BLE_PRPH_MODE_NUS) {
-                /* Typically a stale bond on one side (e.g. after a factory reset).
-                 * Drop ours so the next attempt pairs from scratch; the peer must
-                 * "Forget" the device on its side. */
-                MODLOG_DFLT(ERROR, "encryption failed (0x%x); deleting local bond", event->enc_change.status);
-                ble_store_util_delete_peer(&desc.peer_id_addr);
+                /* Do NOT drop our bond here: transient failures (timeouts, the peer
+                 * closing the link mid-procedure → ENOTCONN) would otherwise leave
+                 * the peer with a key we no longer have, and it never re-pairs on
+                 * its own. Bonds are only cleared via {"cmd":"unpair"} (desktop
+                 * "Forget"). Status 7/ENOTCONN = the peer disconnected during the
+                 * procedure, usually because *it* holds a stale key. */
+                MODLOG_DFLT(ERROR, "encryption failed (status=%d); keeping bond. "
+                            "If this repeats, Forget the device on the desktop and pair again.",
+                            event->enc_change.status);
             }
             return 0;
 
@@ -664,6 +764,9 @@ static void bleprph_on_sync(void)
     if (rc != 0) {
         MODLOG_DFLT(ERROR, "error determining address type; rc=%d\n", rc);
         return;
+    }
+    if (s_mode == BLE_PRPH_MODE_NUS) {
+        bleprph_apply_stored_identity();
     }
 
     /* Printing ADDR */

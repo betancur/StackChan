@@ -15,7 +15,7 @@ Esta app convierte al Stack-Chan en un "Hardware Buddy" para Claude Desktop, sig
 3. El robot muestra un panel con un código de seis dígitos. Escribirlo en el diálogo de emparejamiento de macOS.
 4. A partir de ahí la conexión es cifrada y autenticada. Las reconexiones posteriores no piden código porque la clave queda guardada en la memoria no volátil del robot.
 
-Si macOS pierde la clave (por ejemplo tras restaurar el sistema), basta con pulsar **Forget** en Hardware Buddy y volver a conectar. El robot detecta el fallo de cifrado, borra su copia del vínculo y vuelve a mostrar un código nuevo.
+Si un lado pierde la clave, el cifrado falla y macOS **no** vuelve a emparejar por sí solo: "Forget" en Hardware Buddy no borra el bond del sistema. Tras tres fallos seguidos el robot cambia a una dirección BLE aleatoria estática nueva (y la guarda en NVS), de modo que el Mac lo ve como un dispositivo nuevo: basta con pulsar **Connect**, elegirlo y escribir el código. Mientras tanto la burbuja informa del estado: "Mac connected, securing link...", "Pairing failed n/3", "New identity! Connect me again on the Mac".
 
 ## Estados
 
@@ -24,15 +24,35 @@ Si macOS pierde la clave (por ejemplo tras restaurar el sistema), basta con puls
 | sleep | Sin conexión con el escritorio | Cara dormida, cabeza abajo, LEDs apagados. Tras cinco minutos baja el brillo de la pantalla. |
 | idle | Conectado y sin actividad | Movimientos y expresiones aleatorias de reposo. |
 | busy | Hay sesiones generando | Gota de sudor, movimiento lento, LEDs azules respirando. La burbuja muestra el resumen de una línea que envía el escritorio. |
-| attention | Una herramienta espera permiso | Cara de duda, mira hacia arriba, LEDs naranja parpadeando, botones Approve y Deny en pantalla. |
+| attention | Una herramienta espera permiso | Mira hacia arriba, LEDs parpadeando, botones Approve y Deny en pantalla y sonido de alerta. La cara y el color dependen del riesgo del comando (ver abajo). |
 | celebrate | Sube de nivel (cada 50K tokens) | Cara feliz, meneo de cabeza, LEDs arcoíris, texto "Level N!". |
 | dizzy | Se sacude el robot | Ojos en espiral durante unos segundos. |
 | heart | Aprobación en menos de cinco segundos | Corazones flotando y LEDs rosa. |
 
+### Riesgo del comando
+
+El robot clasifica el `hint` de cada solicitud con reglas simples:
+
+- **Peligro** (`rm -rf`, `git push --force`, `DROP TABLE`, `mkfs`, `kubectl delete`…): cara triste con sudor, LEDs rojos, texto "DANGER!". El toque de cabeza no aprueba; solo el botón.
+- **Precaución** (`sudo`, `git push`, `npm publish`, `chmod`, escrituras en `~`…): cara de duda con sudor, LEDs naranja rojizo.
+- **Normal**: cara de duda, LEDs naranja.
+
+### Escalado
+
+Si la solicitud lleva más de un minuto sin respuesta, el parpadeo se acelera y suena un recordatorio cada 30 segundos. Si la cámara no detecta a nadie, la cabeza barre a izquierda y derecha buscando al usuario.
+
+### Mirar a quien aprueba
+
+Mientras hay una solicitud pendiente, la cámara captura a unos 3 fps y calcula el centroide del movimiento por bandas verticales; la cabeza gira hacia donde hay movimiento. No usa detección de caras (no hay esp-dl en este build), así que reacciona a cualquier cosa que se mueva.
+
+### Sonidos
+
+Alerta al llegar la solicitud, recordatorio en el escalado, éxito al aprobar, vibración al denegar y aviso al subir de nivel. Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake.
+
 ## Controles
 
 - Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones y las últimas líneas del transcript. Se cierra solo a los diez segundos o al tocarlo.
-- Con una solicitud pendiente, tocar la cabeza del robot equivale a aprobar.
+- Con una solicitud pendiente, tocar la cabeza del robot equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s (el servo al subir la cabeza puede activar el sensor).
 - El indicador de inicio cierra la app y devuelve al launcher (warm reboot: NimBLE no puede reiniciarse en caliente).
 
 ## Protocolo
@@ -66,5 +86,7 @@ Las características de recepción y transmisión exigen un enlace cifrado y aut
 - `app_claude_buddy.{h,cpp}`: app Mooncake, máquina de estados y mapeo al avatar.
 - `buddy_link.{h,cpp}`: transporte (framing por líneas sobre NUS, envío troceado por MTU, passkey).
 - `buddy_store.h`: ajustes y estadísticas en NVS.
+- `buddy_sfx.{h,cpp}`: efectos de sonido (Ogg Opus embebidos → códec).
+- `buddy_look.{h,cpp}`: seguimiento por movimiento con la cámara.
 - `../../hal/utils/bleprph/nus_svc.{h,c}`: servicio Nordic UART sobre NimBLE.
 - `../../../tools/make_buddy_icon.py`: generador del ícono del launcher.

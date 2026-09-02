@@ -30,6 +30,7 @@ void BuddyLink::start(std::string_view deviceName)
     _started = true;
     nus_svc_set_rx_callback(&BuddyLink::rx_trampoline);
     ble_prph_set_passkey_callback(&BuddyLink::passkey_trampoline);
+    ble_prph_set_link_callback([](ble_prph_link_event_t evt, int arg) { BuddyLink::link_trampoline(evt, arg); });
     GetHAL().startBuddyBleServer(deviceName);
 }
 
@@ -53,6 +54,34 @@ void BuddyLink::passkey_trampoline(uint32_t passkey, bool show)
     instance()._passkey.store(show ? passkey : 0);
     if (show) {
         mclog::tagInfo(TAG, "pairing passkey: {}", passkey);
+    }
+}
+
+void BuddyLink::link_trampoline(int evt, int arg)
+{
+    auto& self = instance();
+    switch (static_cast<ble_prph_link_event_t>(evt)) {
+        case BLE_PRPH_EVT_CONNECTED:
+            self._status = static_cast<int>(LinkStatus::Connected);
+            break;
+        case BLE_PRPH_EVT_DISCONNECTED:
+            // Keep "PairFailed"/"IdentityRotated" visible while advertising again
+            if (self._status == static_cast<int>(LinkStatus::Connected) ||
+                self._status == static_cast<int>(LinkStatus::Encrypted)) {
+                self._status = static_cast<int>(LinkStatus::Advertising);
+            }
+            break;
+        case BLE_PRPH_EVT_ENC_OK:
+            self._fail_count = 0;
+            self._status     = static_cast<int>(LinkStatus::Encrypted);
+            break;
+        case BLE_PRPH_EVT_ENC_FAIL:
+            self._fail_count = arg;
+            self._status     = static_cast<int>(LinkStatus::PairFailed);
+            break;
+        case BLE_PRPH_EVT_IDENTITY_ROTATED:
+            self._status = static_cast<int>(LinkStatus::IdentityRotated);
+            break;
     }
 }
 
