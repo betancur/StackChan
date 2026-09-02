@@ -309,8 +309,8 @@ void AppRozAgent::onClose()
         view::destroy_status_bar();
     }
 
-    // Warm-reboot back to launcher (index 0)
-    GetHAL().requestWarmReboot(0);
+    // Warm-reboot back to launcher, landing on this app's icon (index 1: Buddy is 0)
+    GetHAL().requestWarmReboot(1);
 }
 
 // ── Avatar state transitions ──────────────────────────────────────────────────
