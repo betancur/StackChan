@@ -37,6 +37,10 @@ El robot clasifica el `hint` de cada solicitud con reglas simples:
 - **Precaución** (`sudo`, `git push`, `npm publish`, `chmod`, escrituras en `~`…): cara de duda con sudor, LEDs naranja rojizo.
 - **Normal**: cara de duda, LEDs naranja.
 
+### Modo reloj
+
+Tras diez minutos sin actividad (robot en idle o dormido, sin solicitudes ni toques) la pantalla muestra la hora en grande y la fecha. Vuelve a la cara en cuanto Claude se pone a trabajar, llega una solicitud o se toca la pantalla.
+
 ### Escalado
 
 Si la solicitud lleva más de un minuto sin respuesta, el parpadeo se acelera y suena un recordatorio cada 30 segundos. Si la cámara no detecta a nadie, la cabeza barre a izquierda y derecha buscando al usuario.
@@ -47,7 +51,7 @@ Mientras hay una solicitud pendiente, la cámara captura a unos 3 fps y calcula 
 
 ### Sonidos
 
-Alerta al llegar la solicitud, recordatorio en el escalado, éxito al aprobar, vibración al denegar, aviso al subir de nivel y un timbre al conectar con el escritorio. Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake. Peculiaridad del CoreS3: el amplificador AW88298 solo suena si antes se ha abierto y leído el canal de entrada (ES7210) al menos una vez en ese arranque; el reproductor ceba el micrófono con tres lecturas, cierra la entrada y entonces abre la salida. Los clips llevan ganancia ×5 con limitador suave porque el driver del amplificador resta la ganancia hardware al volumen y salen muy bajos.
+Clips propios estilo 8-bit sintetizados por `tools/make_buddy_sfx.py` (Ogg Opus, 16 kHz, frames de 60 ms) en `main/assets/sfx/`: timbre de dos notas al conectar, tres pings ascendentes al llegar una solicitud, tres beeps en el recordatorio, arpegio mayor al aprobar, dos notas graves al denegar y fanfarria al subir de nivel. Para cambiarlos basta editar las notas en el script y volver a ejecutarlo (necesita ffmpeg con libopus). Se reproducen decodificando Opus directamente al códec, porque el servicio de audio de XiaoZhi no corre en modo Mooncake. Peculiaridad del CoreS3: el amplificador AW88298 solo suena si antes se ha abierto y leído el canal de entrada (ES7210) al menos una vez en ese arranque; el reproductor ceba el micrófono con tres lecturas, cierra la entrada y entonces abre la salida. Los clips llevan ganancia ×5 con limitador suave porque el driver del amplificador resta la ganancia hardware al volumen y salen muy bajos.
 
 ## Controles
 
@@ -92,3 +96,4 @@ Las características de recepción y transmisión exigen un enlace cifrado y aut
 - `buddy_look.{h,cpp}`: seguimiento por movimiento con la cámara.
 - `../../hal/utils/bleprph/nus_svc.{h,c}`: servicio Nordic UART sobre NimBLE.
 - `../../../tools/make_buddy_icon.py`: generador del ícono del launcher.
+- `../../../tools/make_buddy_sfx.py`: sintetizador de los efectos de sonido.

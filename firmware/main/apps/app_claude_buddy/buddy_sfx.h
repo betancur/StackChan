@@ -11,6 +11,7 @@
 namespace buddy {
 
 enum class Sfx {
+    Connect,    // desktop linked up
     Attention,  // approval prompt appeared
     Reminder,   // prompt still unanswered (escalation)
     Approve,

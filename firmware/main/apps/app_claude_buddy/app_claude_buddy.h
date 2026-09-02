@@ -93,6 +93,8 @@ private:
     void refreshOverlay();
     void showPasskey(uint32_t passkey);
     void refreshChart();
+    void showClock(bool show);
+    void updateClock();
     static std::string compactNumber(uint32_t v);
     static uint32_t localDate();  // yyyymmdd, 0 if the clock is not set
 
@@ -167,6 +169,11 @@ private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _chart_title;
     bool     _days_dirty       = false;
     uint32_t _last_days_save_ms = 0;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _clock_panel;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _clock_time;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _clock_date;
+    bool     _clock_shown   = false;
+    uint32_t _clock_tick    = 0;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _pair_panel;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_title;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_code;
@@ -180,6 +187,7 @@ private:
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
     static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
     static constexpr uint32_t DAYS_SAVE_EVERY_MS  = 60 * 1000;
+    static constexpr uint32_t CLOCK_AFTER_MS      = 10 * 60 * 1000;  // idle/sleep → clock face
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
     static constexpr uint32_t ESCALATE_AFTER_MS   = 60 * 1000;  // prompt unanswered → escalate
     static constexpr uint32_t REMINDER_EVERY_MS   = 30 * 1000;

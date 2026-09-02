@@ -125,7 +125,7 @@ void AppClaudeBuddy::onRunning()
             mclog::tagInfo(TAG, "bridge alive");
             _linked_since_ms = now;
             noteActivity();
-            buddy::play_sfx(buddy::Sfx::LevelUp);  // connected chime
+            buddy::play_sfx(buddy::Sfx::Connect);
         }
     }
 
@@ -162,6 +162,11 @@ void AppClaudeBuddy::onRunning()
 
     if (screen_click || head_pressed || approve_click || deny_click || overlay_click) {
         noteActivity();
+        if (_clock_shown) {
+            LvglLockGuard lock;
+            showClock(false);
+            screen_click = false;  // the tap only dismissed the clock
+        }
     }
 
     if (_snap.prompt.present) {
@@ -205,6 +210,19 @@ void AppClaudeBuddy::onRunning()
 
     // ── Resolve effective mood ───────────────────────────────────────────────
     setMood(_transient_active ? _transient : baseMood());
+
+    // ── Clock mode: nothing happening for a while → show the time ───────────
+    {
+        bool quiet = (_mood == Mood::Idle || _mood == Mood::Sleep) && !_snap.prompt.present &&
+                     (now - _last_activity_ms) >= CLOCK_AFTER_MS && localDate() != 0;
+        if (quiet != _clock_shown) {
+            LvglLockGuard lock;
+            showClock(quiet);
+        } else if (_clock_shown && now - _clock_tick >= 15000) {
+            LvglLockGuard lock;
+            updateClock();
+        }
+    }
 
     // ── Persist daily history (throttled) ───────────────────────────────────
     if (_days_dirty && now - _last_days_save_ms >= DAYS_SAVE_EVERY_MS) {
@@ -1004,6 +1022,35 @@ void AppClaudeBuddy::createUi()
     }
     _overlay->setHidden(true);
 
+    // Clock face (idle for a long time)
+    _clock_panel = std::make_unique<Container>(lv_screen_active());
+    _clock_panel->setSize(320, 240);
+    _clock_panel->setAlign(LV_ALIGN_CENTER);
+    _clock_panel->setBgColor(lv_color_hex(0x0A0A0A));
+    _clock_panel->setBgOpa(LV_OPA_COVER);
+    _clock_panel->setBorderWidth(0);
+    _clock_panel->setRadius(0);
+    _clock_panel->setPaddingAll(0);
+    _clock_panel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+    _clock_panel->onClick().connect([this]() { _screen_clicked = true; });
+
+    _clock_time = std::make_unique<Label>(_clock_panel->get());
+    _clock_time->setTextFont(&MontserratSemiBold26);
+    _clock_time->setTextColor(lv_color_hex(THEME_PRIMARY));
+    _clock_time->setText("--:--");
+    _clock_time->align(LV_ALIGN_CENTER, 0, -14);
+    // No large font in this build: scale the 26 px face ×2.6 (renders as a bitmap)
+    lv_obj_set_style_transform_scale(_clock_time->get(), 666, 0);
+    lv_obj_set_style_transform_pivot_x(_clock_time->get(), LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(_clock_time->get(), LV_PCT(50), 0);
+
+    _clock_date = std::make_unique<Label>(_clock_panel->get());
+    _clock_date->setTextFont(&lv_font_montserrat_16);
+    _clock_date->setTextColor(lv_color_hex(0x9A9A9A));
+    _clock_date->setText("");
+    _clock_date->align(LV_ALIGN_CENTER, 0, 52);
+    _clock_panel->setHidden(true);
+
     // Pairing passkey panel (shown while macOS asks for the 6-digit code)
     _pair_panel = std::make_unique<Container>(lv_screen_active());
     _pair_panel->setSize(250, 112);
@@ -1030,6 +1077,40 @@ void AppClaudeBuddy::createUi()
     _pair_panel->setHidden(true);
 }
 
+void AppClaudeBuddy::showClock(bool show)
+{
+    // Must be called with LvglLockGuard held.
+    if (!_clock_panel) return;
+    _clock_shown = show;
+    if (show) {
+        mclog::tagInfo(TAG, "clock mode on");
+        updateClock();
+        showOverlay(false);
+        _clock_panel->setHidden(false);
+        _clock_panel->moveForeground();
+        if (GetStackChan().hasAvatar()) GetStackChan().avatar().setSpeech("");
+    } else {
+        mclog::tagInfo(TAG, "clock mode off");
+        _clock_panel->setHidden(true);
+        refreshSpeech();
+    }
+}
+
+void AppClaudeBuddy::updateClock()
+{
+    // Must be called with LvglLockGuard held.
+    if (!_clock_time || !_clock_date) return;
+    _clock_tick = GetHAL().millis();
+    time_t now  = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    char tbuf[8], dbuf[40];
+    strftime(tbuf, sizeof(tbuf), "%H:%M", &t);
+    strftime(dbuf, sizeof(dbuf), "%a %d %b", &t);
+    _clock_time->setText(tbuf);
+    _clock_date->setText(dbuf);
+}
+
 void AppClaudeBuddy::showPasskey(uint32_t passkey)
 {
     // Must be called with LvglLockGuard held.
@@ -1052,6 +1133,9 @@ void AppClaudeBuddy::showPasskey(uint32_t passkey)
 
 void AppClaudeBuddy::destroyUi()
 {
+    _clock_date.reset();
+    _clock_time.reset();
+    _clock_panel.reset();
     for (auto& l : _day_labels) l.reset();
     for (auto& l : _bar_values) l.reset();
     _chart_title.reset();
