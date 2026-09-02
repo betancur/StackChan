@@ -97,6 +97,7 @@ private:
     bool _has_snapshot        = false;
     uint32_t _last_snapshot_ms = 0;
     bool _was_linked          = false;  // last computed "bridge alive" value
+    uint32_t _linked_since_ms = 0;
 
     Mood _mood            = Mood::Sleep;
     Mood _transient       = Mood::Idle;

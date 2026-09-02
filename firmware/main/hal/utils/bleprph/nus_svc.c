@@ -34,10 +34,6 @@ static uint8_t s_rx_buf[NUS_RX_MAX];
 
 static int nus_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        stackchan_ble_set_conn_handle(conn_handle);
-    }
-
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && attr_handle == s_rx_handle) {
         uint16_t len = 0;
         int rc       = ble_hs_mbuf_to_flat(ctxt->om, s_rx_buf, sizeof(s_rx_buf), &len);

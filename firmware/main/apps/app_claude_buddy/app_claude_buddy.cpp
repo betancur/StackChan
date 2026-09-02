@@ -12,6 +12,7 @@
 #include <esp_heap_caps.h>
 #include <sys/time.h>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <cmath>
 #include <ctime>
@@ -76,10 +77,10 @@ void AppClaudeBuddy::onOpen()
     });
 
     // Advertise as "Claude StackChan-XXXX" (desktop filters on the "Claude" prefix)
-    std::string mac  = GetHAL().getFactoryMacString();
-    std::string name = "Claude StackChan-" + (mac.size() >= 4 ? mac.substr(mac.size() - 4) : mac);
-    for (auto& c : name) c = (c >= 'a' && c <= 'f') ? (c - 'a' + 'A') : c;
-    buddy::BuddyLink::instance().start(name);
+    std::string mac    = GetHAL().getFactoryMacString();
+    std::string suffix = mac.size() >= 4 ? mac.substr(mac.size() - 4) : mac;
+    for (auto& c : suffix) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    buddy::BuddyLink::instance().start("Claude StackChan-" + suffix);
 
     _last_activity_ms = GetHAL().millis();
     setMood(Mood::Sleep, true);
@@ -100,18 +101,27 @@ void AppClaudeBuddy::onRunning()
     }
 
     // ── Link liveness → base mood ────────────────────────────────────────────
-    bool linked = link.isConnected() && _has_snapshot && (now - _last_snapshot_ms) < LINK_TIMEOUT_MS;
+    // Re-read the clock: a snapshot handled above stamps a time later than `now`
+    // and the unsigned subtraction would wrap and flag the bridge as dead.
+    now           = GetHAL().millis();
+    bool ble_up   = link.isConnected();
+    uint32_t age  = _has_snapshot ? (now - _last_snapshot_ms) : 0;
+    bool linked   = ble_up && _has_snapshot && age < LINK_TIMEOUT_MS;
     if (linked != _was_linked) {
         _was_linked = linked;
         if (!linked) {
-            mclog::tagInfo(TAG, "bridge lost → sleep");
+            mclog::tagInfo(TAG, "bridge lost → sleep (ble={} snap={} age={}ms)", ble_up, _has_snapshot, age);
             _has_snapshot = false;
             _level        = -1;
-            _store.nap++;
-            _store.saveStats();
+            // Count a nap only after a real session (avoid NVS wear on brief flaps)
+            if (now - _linked_since_ms > 10000) {
+                _store.nap++;
+                _store.saveStats();
+            }
             _transient_active = false;
         } else {
             mclog::tagInfo(TAG, "bridge alive");
+            _linked_since_ms = now;
             noteActivity();
         }
     }
