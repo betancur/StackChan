@@ -46,7 +46,14 @@ struct TouchData {
 
     bool is_touched() const
     {
-        return get_max_intensity() >= 1;
+        // A finger covers one or two pads at level 2-3. All three pads reading
+        // the same value is common-mode drift of the Si12T baseline (it can
+        // sit at [2,2,2] for minutes) and must not count as a touch, otherwise
+        // the gesture state machine stays "touched" and real pets are missed.
+        if (intensity[0] == intensity[1] && intensity[1] == intensity[2]) {
+            return false;
+        }
+        return get_max_intensity() >= 2;
     }
 };
 
@@ -65,17 +72,30 @@ public:
         switch (current_state) {
             case TouchState::IDLE:
                 if (data.is_touched()) {
-                    current_state    = TouchState::TOUCHED;
-                    initial_position = data.get_position();
-                    gesture          = HeadPetGesture::Press;
-                    // mclog::tagInfo(_tag, "Touch detected at position: {}", initial_position);
+                    // Debounce: the pads produce single-sample blips (ghost presses);
+                    // require two consecutive touched samples (~100 ms) before a Press.
+                    if (++touched_samples >= 2) {
+                        touched_samples  = 0;
+                        current_state    = TouchState::TOUCHED;
+                        initial_position = data.get_position();
+                        touch_start_ms   = data.timestamp;
+                        gesture          = HeadPetGesture::Press;
+                        mclog::tagInfo(_tag, "press  pads=[{},{},{}] pos={}", data.intensity[0], data.intensity[1],
+                                       data.intensity[2], initial_position);
+                    }
+                } else if (touched_samples) {
+                    mclog::tagInfo(_tag, "blip   ignored (single sample)");
+                    touched_samples = 0;
                 }
                 break;
 
             case TouchState::TOUCHED:
-                if (!data.is_touched()) {
+                if (!data.is_touched() || (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS > MAX_TOUCH_MS) {
                     current_state = TouchState::IDLE;
                     gesture       = HeadPetGesture::Release;
+                    mclog::tagInfo(_tag, "release after {} ms (no swipe{})",
+                                   (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS,
+                                   data.is_touched() ? ", timeout" : "");
                 } else {
                     // Check for swipe
                     int16_t current_pos = data.get_position();
@@ -84,11 +104,13 @@ public:
                     if (delta > config.swipe_threshold) {
                         current_state = TouchState::SWIPING;
                         gesture       = HeadPetGesture::SwipeForward;
-                        // mclog::tagInfo(_tag, "Swipe forward detected, delta: {}", delta);
+                        mclog::tagInfo(_tag, "swipe  fwd delta={} pads=[{},{},{}]", delta, data.intensity[0],
+                                       data.intensity[1], data.intensity[2]);
                     } else if (delta < -config.swipe_threshold) {
                         current_state = TouchState::SWIPING;
                         gesture       = HeadPetGesture::SwipeBackward;
-                        // mclog::tagInfo(_tag, "Swipe backward detected, delta: {}", delta);
+                        mclog::tagInfo(_tag, "swipe  back delta={} pads=[{},{},{}]", delta, data.intensity[0],
+                                       data.intensity[1], data.intensity[2]);
                     }
                 }
                 break;
@@ -97,6 +119,8 @@ public:
                 if (!data.is_touched()) {
                     current_state = TouchState::IDLE;
                     gesture       = HeadPetGesture::Release;
+                    mclog::tagInfo(_tag, "release after {} ms (swiped)",
+                                   (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS);
                 }
                 break;
         }
@@ -113,6 +137,9 @@ private:
     TouchConfig config;
     TouchState current_state;
     int16_t initial_position;
+    uint8_t touched_samples = 0;
+    uint32_t touch_start_ms = 0;
+    static constexpr uint32_t MAX_TOUCH_MS = 3000;  // re-arm if something stays "touched"
 };
 
 static void _head_touch_update_task(void* param)

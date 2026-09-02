@@ -75,7 +75,16 @@ void AppClaudeBuddy::onOpen()
 
     // Head touch: approve while a prompt is pending, otherwise just activity
     _head_touch_conn = GetHAL().onHeadPetGesture.connect([this](HeadPetGesture g) {
-        if (g == HeadPetGesture::Press) _head_pressed = true;
+        uint32_t now = GetHAL().millis();
+        if (g == HeadPetGesture::Press) {
+            _head_pressed  = true;
+            _head_press_ms = now;
+        } else if (g == HeadPetGesture::Release || g == HeadPetGesture::SwipeForward ||
+                   g == HeadPetGesture::SwipeBackward) {
+            // Approval needs a real tap or pet: the sensor's baseline drift produces
+            // presses that never release quickly.
+            if (now - _head_press_ms.load() <= HEAD_TAP_MS) _head_tap = true;
+        }
     });
 
     // Advertise as "Claude StackChan-XXXX" (desktop filters on the "Claude" prefix)
@@ -156,6 +165,7 @@ void AppClaudeBuddy::onRunning()
     // ── Input flags ──────────────────────────────────────────────────────────
     bool screen_click  = _screen_clicked.exchange(false);
     bool head_pressed  = _head_pressed.exchange(false);
+    bool head_tap      = _head_tap.exchange(false);
     bool approve_click = _approve_clicked.exchange(false);
     bool deny_click    = _deny_clicked.exchange(false);
     bool overlay_click = _overlay_clicked.exchange(false);
@@ -175,11 +185,13 @@ void AppClaudeBuddy::onRunning()
     if (_snap.prompt.present) {
         // Head-pet approves only for non-dangerous prompts, and never in the first
         // 1.5 s (the "look up" servo move can tickle the capacitive head sensor).
-        bool head_ok = head_pressed && _prompt_risk != Risk::Danger &&
+        bool head_ok = head_tap && _prompt_risk != Risk::Danger &&
                        (now - _prompt_seen_ms) >= HEAD_APPROVE_GRACE_MS;
-        if (head_pressed && !head_ok) {
+        if ((head_tap || head_pressed) && !head_ok) {
             mclog::tagInfo(TAG, "head touch ignored ({})",
-                           _prompt_risk == Risk::Danger ? "danger prompt: use the button" : "too soon after prompt");
+                           _prompt_risk == Risk::Danger ? "danger prompt: use the button"
+                           : !head_tap                  ? "press without release"
+                                                        : "too soon after prompt");
         }
         if (approve_click || head_ok) decide(true);
         else if (deny_click) decide(false);
@@ -196,6 +208,18 @@ void AppClaudeBuddy::onRunning()
     if (_overlay_until && now >= _overlay_until) {
         LvglLockGuard lock;
         showOverlay(false);
+    }
+
+    // ── Wink expiry (Heart) ──────────────────────────────────────────────────
+    if (_wink_until && now >= _wink_until) {
+        _wink_until = 0;
+        LvglLockGuard lock;
+        if (GetStackChan().hasAvatar()) {
+            auto& av = GetStackChan().avatar();
+            av.leftEye().setWeight(100);
+            av.rightEye().setWeight(100);
+            av.setModifyLock(false);
+        }
     }
 
     // ── Transient mood expiry ────────────────────────────────────────────────
@@ -348,10 +372,17 @@ void AppClaudeBuddy::handleSnapshot(JsonObjectConst doc)
 
     JsonObjectConst p = doc["prompt"].as<JsonObjectConst>();
     if (!p.isNull() && p["id"].is<const char*>()) {
-        s.prompt.present = true;
-        s.prompt.id      = p["id"].as<const char*>();
-        s.prompt.tool    = p["tool"] | "";
-        s.prompt.hint    = p["hint"] | "";
+        std::string id = p["id"].as<const char*>();
+        if (id == _prompt_decided_id) {
+            // The desktop still echoes a prompt we already answered; treat as absent
+        } else {
+            s.prompt.present = true;
+            s.prompt.id      = id;
+            s.prompt.tool    = p["tool"] | "";
+            s.prompt.hint    = p["hint"] | "";
+        }
+    } else {
+        _prompt_decided_id.clear();  // desktop dropped it: a future id may repeat
     }
 
     uint32_t now = GetHAL().millis();
@@ -567,6 +598,7 @@ void AppClaudeBuddy::decide(bool approve)
         }
     } else {
         _store.deny++;
+        startTransient(Mood::Grumpy, GRUMPY_MS);
     }
     _store.saveStats();
     if (uint32_t d = localDate()) {
@@ -576,8 +608,9 @@ void AppClaudeBuddy::decide(bool approve)
         _days_dirty = false;
     }
 
-    // Clear locally; the next snapshot is authoritative
-    _snap.prompt = Prompt{};
+    // Clear locally; ignore echoes of this id until the desktop drops the prompt
+    _prompt_decided_id = _snap.prompt.id;
+    _snap.prompt       = Prompt{};
     _prompt_seen_id.clear();
     LvglLockGuard lock;
     refreshSpeech();
@@ -606,8 +639,16 @@ void AppClaudeBuddy::clearTransientModifiers()
     if (_idle_motion_id >= 0) { sc.removeModifier(_idle_motion_id); _idle_motion_id = -1; }
     if (_idle_expr_id   >= 0) { sc.removeModifier(_idle_expr_id);   _idle_expr_id   = -1; }
     if (sc.hasAvatar()) {
-        if (_sweat_id >= 0) { sc.avatar().removeDecorator(_sweat_id); _sweat_id = -1; }
-        if (_heart_id >= 0) { sc.avatar().removeDecorator(_heart_id); _heart_id = -1; }
+        auto& av = sc.avatar();
+        if (_sweat_id >= 0) { av.removeDecorator(_sweat_id); _sweat_id = -1; }
+        if (_heart_id >= 0) { av.removeDecorator(_heart_id); _heart_id = -1; }
+        if (_angry_id >= 0) { av.removeDecorator(_angry_id); _angry_id = -1; }
+        if (_wink_until) {  // leaving Heart early: open the eye again
+            _wink_until = 0;
+            av.leftEye().setWeight(100);
+            av.rightEye().setWeight(100);
+            av.setModifyLock(false);
+        }
     }
 }
 
@@ -688,8 +729,21 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             av.setEmotion(avatar::Emotion::Happy);
             av.mouth().setWeight(40);
             _heart_id = av.addDecorator(std::make_unique<avatar::HeartDecorator>(lv_screen_active(), 0, 400));
+            // Wink: close one eye briefly (lock so the blink modifier keeps its hands off)
+            av.setModifyLock(true);
+            av.leftEye().setWeight(0);
+            av.rightEye().setWeight(100);
+            _wink_until = GetHAL().millis() + WINK_MS;
             GetHAL().showRgbColor(70, 0, 30);
             break;
+
+        case Mood::Grumpy:
+            av.setEmotion(avatar::Emotion::Angry);
+            av.mouth().setWeight(15);
+            _angry_id = av.addDecorator(std::make_unique<avatar::AngryDecorator>(lv_screen_active(), 0, 450));
+            _wiggle_tick = 0;
+            GetHAL().showRgbColor(110, 0, 0);
+            break;  // head shake in updateCelebrateWiggle()
     }
 
     refreshSpeech();
@@ -754,6 +808,9 @@ void AppClaudeBuddy::refreshSpeech()
         }
         case Mood::Heart:
             av.setSpeech("Thanks!");
+            return;
+        case Mood::Grumpy:
+            av.setSpeech("Nope.");
             return;
         case Mood::Busy:
         case Mood::Idle:
@@ -831,17 +888,24 @@ void AppClaudeBuddy::updateLeds()
 
 void AppClaudeBuddy::updateCelebrateWiggle()
 {
-    if (_mood != Mood::Celebrate) {
+    // Celebrate: wide happy wiggle. Grumpy: quick short "no" head shake.
+    if (_mood != Mood::Celebrate && _mood != Mood::Grumpy) {
         return;
     }
-    uint32_t now = GetHAL().millis();
-    if (now - _wiggle_tick < 350) {
+    bool grumpy      = (_mood == Mood::Grumpy);
+    uint32_t period  = grumpy ? 230 : 350;
+    int amplitude    = grumpy ? 150 : 260;
+    uint32_t now     = GetHAL().millis();
+    if (now - _wiggle_tick < period) {
         return;
     }
     _wiggle_tick  = now;
     _wiggle_phase = !_wiggle_phase;
     LvglLockGuard lock;
-    GetStackChan().motion().moveWithSpeed(_wiggle_phase ? 260 : -260, 220, 450);
+    auto& motion = GetStackChan().motion();
+    if (!motion.isModifyLocked()) {
+        motion.moveWithSpeed(_wiggle_phase ? amplitude : -amplitude, grumpy ? 280 : 220, grumpy ? 600 : 450);
+    }
 }
 
 void AppClaudeBuddy::updateAttention()
@@ -927,6 +991,7 @@ const char* AppClaudeBuddy::moodName(Mood m)
         case Mood::Attention: return "attention";
         case Mood::Celebrate: return "celebrate";
         case Mood::Heart:     return "heart";
+        case Mood::Grumpy:    return "grumpy";
     }
     return "?";
 }

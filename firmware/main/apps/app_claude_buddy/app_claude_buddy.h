@@ -40,7 +40,7 @@ public:
     void onClose() override;
 
 private:
-    enum class Mood { Sleep, Idle, Busy, Attention, Celebrate, Heart };
+    enum class Mood { Sleep, Idle, Busy, Attention, Celebrate, Heart, Grumpy };
     enum class Risk { None, Caution, Danger };
 
     struct Prompt {
@@ -120,6 +120,7 @@ private:
     int _level            = -1;  // -1 = not yet baselined
     uint32_t _prompt_seen_ms = 0;
     std::string _prompt_seen_id;
+    std::string _prompt_decided_id;  // already answered; ignore until the desktop drops it
     Risk _prompt_risk     = Risk::None;
 
     // Attention escalation / look-at
@@ -136,6 +137,8 @@ private:
     int _idle_expr_id   = -1;
     int _sweat_id       = -1;
     int _heart_id       = -1;
+    int _angry_id       = -1;
+    uint32_t _wink_until = 0;  // Heart: one eye closed until this time
 
     // Signal connections
     int _head_touch_conn = -1;
@@ -143,6 +146,8 @@ private:
     // Flags set from signal/LVGL context, consumed in onRunning()
     std::atomic<bool> _screen_clicked{false};
     std::atomic<bool> _head_pressed{false};
+    std::atomic<bool> _head_tap{false};        // press + release within HEAD_TAP_MS
+    std::atomic<uint32_t> _head_press_ms{0};
     std::atomic<bool> _approve_clicked{false};
     std::atomic<bool> _deny_clicked{false};
     std::atomic<bool> _overlay_clicked{false};
@@ -182,8 +187,11 @@ private:
 
     static constexpr uint32_t LINK_TIMEOUT_MS     = 30 * 1000;   // spec: dead if no snapshot in ~30 s
     static constexpr uint32_t TRANSIENT_MS        = 3200;
+    static constexpr uint32_t GRUMPY_MS           = 2600;
+    static constexpr uint32_t WINK_MS             = 750;
     static constexpr uint32_t FAST_APPROVE_MS     = 5000;
     static constexpr uint32_t HEAD_APPROVE_GRACE_MS = 1500;
+    static constexpr uint32_t HEAD_TAP_MS           = 1500;  // a real tap releases quickly; drift never does
     static constexpr uint32_t TURN_SHOW_MS        = 7000;
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
     static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
