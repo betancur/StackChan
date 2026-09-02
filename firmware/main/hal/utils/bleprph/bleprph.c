@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 
 /* BLE */
 #include "bleprph.h"
@@ -80,6 +81,25 @@ static uint16_t bearers;
 
 static bool s_use_alt_uuid       = false;
 static ble_prph_mode_t s_mode    = BLE_PRPH_MODE_STACKCHAN;
+static ble_prph_passkey_cb_t s_passkey_cb = NULL;
+
+void ble_prph_set_passkey_callback(ble_prph_passkey_cb_t cb)
+{
+    s_passkey_cb = cb;
+}
+
+bool ble_prph_is_encrypted(void)
+{
+    struct ble_gap_conn_desc desc;
+    uint16_t handle = stackchan_ble_get_conn_handle();
+    if (handle == BLE_HS_CONN_HANDLE_NONE) {
+        return false;
+    }
+    if (ble_gap_conn_find(handle, &desc) != 0) {
+        return false;
+    }
+    return desc.sec_state.encrypted != 0;
+}
 
 void ble_store_config_init(void);
 
@@ -366,6 +386,12 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                 assert(rc == 0);
                 bleprph_print_conn_desc(&desc);
                 stackchan_ble_set_conn_handle(event->connect.conn_handle);
+                if (s_mode == BLE_PRPH_MODE_NUS) {
+                    /* Ask the central to pair/encrypt now instead of waiting for
+                     * the first GATT access to fail with insufficient auth. */
+                    rc = ble_gap_security_initiate(event->connect.conn_handle);
+                    MODLOG_DFLT(INFO, "security initiate rc=%d", rc);
+                }
             }
             MODLOG_DFLT(INFO, "\n");
 
@@ -388,6 +414,9 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             bleprph_print_conn_desc(&event->disconnect.conn);
             stackchan_ble_set_conn_handle(BLE_HS_CONN_HANDLE_NONE);
             nus_svc_on_disconnect();
+            if (s_passkey_cb) {
+                s_passkey_cb(0, false);
+            }
             MODLOG_DFLT(INFO, "\n");
 
             /* Connection terminated; resume advertising. */
@@ -423,6 +452,16 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             assert(rc == 0);
             bleprph_print_conn_desc(&desc);
             MODLOG_DFLT(INFO, "\n");
+            if (s_passkey_cb) {
+                s_passkey_cb(0, false);
+            }
+            if (event->enc_change.status != 0 && s_mode == BLE_PRPH_MODE_NUS) {
+                /* Typically a stale bond on one side (e.g. after a factory reset).
+                 * Drop ours so the next attempt pairs from scratch; the peer must
+                 * "Forget" the device on its side. */
+                MODLOG_DFLT(ERROR, "encryption failed (0x%x); deleting local bond", event->enc_change.status);
+                ble_store_util_delete_peer(&desc.peer_id_addr);
+            }
             return 0;
 
         case BLE_GAP_EVENT_NOTIFY_TX:
@@ -471,8 +510,15 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
 
             if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
                 pkey.action  = event->passkey.params.action;
-                pkey.passkey = 123456;  // This is the passkey to be entered on peer
-                ESP_LOGI(tag, "Enter passkey %" PRIu32 "on the peer side", pkey.passkey);
+                if (s_mode == BLE_PRPH_MODE_NUS) {
+                    pkey.passkey = 100000 + (esp_random() % 900000);  // fresh 6-digit code per pairing
+                } else {
+                    pkey.passkey = 123456;  // This is the passkey to be entered on peer
+                }
+                ESP_LOGI(tag, "Enter passkey %" PRIu32 " on the peer side", pkey.passkey);
+                if (s_passkey_cb) {
+                    s_passkey_cb(pkey.passkey, true);
+                }
                 rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
                 ESP_LOGI(tag, "ble_sm_inject_io result: %d", rc);
             } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
@@ -701,6 +747,18 @@ void ble_prph_init_ex(ble_prph_mode_t mode, const char *device_name)
 #if MYNEWT_VAL(STATIC_PASSKEY) && NIMBLE_BLE_CONNECT
     ble_sm_configure_static_passkey(456789, true);
 #endif
+
+    if (mode == BLE_PRPH_MODE_NUS) {
+        /* Claude Desktop Buddy: LE Secure Connections bonding with a passkey
+         * shown on the robot (DisplayOnly). Transcript snippets and tool hints
+         * flow over this link, so require an authenticated, encrypted channel. */
+        ble_hs_cfg.sm_io_cap        = BLE_SM_IO_CAP_DISP_ONLY;
+        ble_hs_cfg.sm_bonding       = 1;
+        ble_hs_cfg.sm_mitm          = 1;
+        ble_hs_cfg.sm_sc            = 1;
+        ble_hs_cfg.sm_our_key_dist  = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    }
 
 #if MYNEWT_VAL(BLE_GATTS)
     rc = gatt_svr_init(mode);

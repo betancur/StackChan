@@ -185,6 +185,17 @@ int gatt_svr_init(ble_prph_mode_t mode);
 void ble_prph_init(bool use_alt_uuid);
 void ble_prph_init_ex(ble_prph_mode_t mode, const char *device_name);
 
+/**
+ * Pairing passkey display hook (NUS mode). Called with show=true and the
+ * 6-digit passkey the peer must type, and show=false once the link is
+ * encrypted or dropped.
+ */
+typedef void (*ble_prph_passkey_cb_t)(uint32_t passkey, bool show);
+void ble_prph_set_passkey_callback(ble_prph_passkey_cb_t cb);
+
+/** True when the current connection is encrypted. */
+bool ble_prph_is_encrypted(void);
+
 #ifdef __cplusplus
 }
 #endif

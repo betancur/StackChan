@@ -29,6 +29,7 @@ void BuddyLink::start(std::string_view deviceName)
     }
     _started = true;
     nus_svc_set_rx_callback(&BuddyLink::rx_trampoline);
+    ble_prph_set_passkey_callback(&BuddyLink::passkey_trampoline);
     GetHAL().startBuddyBleServer(deviceName);
 }
 
@@ -45,6 +46,19 @@ bool BuddyLink::isReady() const
 void BuddyLink::rx_trampoline(const uint8_t* data, uint16_t len)
 {
     instance().onRx(data, len);
+}
+
+void BuddyLink::passkey_trampoline(uint32_t passkey, bool show)
+{
+    instance()._passkey.store(show ? passkey : 0);
+    if (show) {
+        mclog::tagInfo(TAG, "pairing passkey: {}", passkey);
+    }
+}
+
+bool BuddyLink::isEncrypted() const
+{
+    return ble_prph_is_encrypted();
 }
 
 void BuddyLink::onRx(const uint8_t* data, uint16_t len)

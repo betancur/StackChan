@@ -126,6 +126,17 @@ void AppClaudeBuddy::onRunning()
         }
     }
 
+    // ── Pairing passkey ──────────────────────────────────────────────────────
+    {
+        uint32_t pk = link.pendingPasskey();
+        if (pk != _shown_passkey) {
+            _shown_passkey = pk;
+            noteActivity();
+            LvglLockGuard lock;
+            showPasskey(pk);
+        }
+    }
+
     // ── Input flags ──────────────────────────────────────────────────────────
     bool screen_click  = _screen_clicked.exchange(false);
     bool head_pressed  = _head_pressed.exchange(false);
@@ -414,7 +425,7 @@ void AppClaudeBuddy::sendStatus()
 
     JsonObject d = doc["data"].to<JsonObject>();
     d["name"]    = _store.name;
-    d["sec"]     = false;  // no bonding/encryption enforced (see sdkconfig EXAMPLE_BONDING)
+    d["sec"]     = buddy::BuddyLink::instance().isEncrypted();
 
     JsonObject bat = d["bat"].to<JsonObject>();
     bat["pct"]     = GetHAL().getBatteryLevel();
@@ -740,10 +751,58 @@ void AppClaudeBuddy::createUi()
     _overlay_label->align(LV_ALIGN_TOP_LEFT, 0, 0);
     _overlay_label->setText("");
     _overlay->setHidden(true);
+
+    // Pairing passkey panel (shown while macOS asks for the 6-digit code)
+    _pair_panel = std::make_unique<Container>(lv_screen_active());
+    _pair_panel->setSize(250, 112);
+    _pair_panel->setAlign(LV_ALIGN_CENTER);
+    _pair_panel->setBgColor(lv_color_hex(THEME_DARK));
+    _pair_panel->setBgOpa(LV_OPA_COVER);
+    _pair_panel->setBorderWidth(3);
+    _pair_panel->setBorderColor(lv_color_hex(THEME_PRIMARY));
+    _pair_panel->setRadius(18);
+    _pair_panel->setPaddingAll(8);
+    _pair_panel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
+
+    _pair_title = std::make_unique<Label>(_pair_panel->get());
+    _pair_title->setTextFont(&lv_font_montserrat_16);
+    _pair_title->setTextColor(lv_color_hex(0xEDEDED));
+    _pair_title->setText("Pairing code");
+    _pair_title->align(LV_ALIGN_TOP_MID, 0, 4);
+
+    _pair_code = std::make_unique<Label>(_pair_panel->get());
+    _pair_code->setTextFont(&MontserratSemiBold26);
+    _pair_code->setTextColor(lv_color_hex(THEME_PRIMARY));
+    _pair_code->setText("");
+    _pair_code->align(LV_ALIGN_BOTTOM_MID, 0, -8);
+    _pair_panel->setHidden(true);
+}
+
+void AppClaudeBuddy::showPasskey(uint32_t passkey)
+{
+    // Must be called with LvglLockGuard held.
+    if (!_pair_panel || !_pair_code) return;
+    if (passkey == 0) {
+        _pair_panel->setHidden(true);
+        refreshSpeech();
+        return;
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%06lu", (unsigned long)passkey);
+    _pair_code->setText(buf);
+    showOverlay(false);
+    _pair_panel->setHidden(false);
+    _pair_panel->moveForeground();
+    if (GetStackChan().hasAvatar()) {
+        GetStackChan().avatar().setSpeech("Type this code on your Mac");
+    }
 }
 
 void AppClaudeBuddy::destroyUi()
 {
+    _pair_code.reset();
+    _pair_title.reset();
+    _pair_panel.reset();
     _overlay_label.reset();
     _overlay.reset();
     _btn_approve.reset();

@@ -13,6 +13,7 @@
 #include <string_view>
 #include <deque>
 #include <mutex>
+#include <atomic>
 #include <cstdint>
 
 namespace buddy {
@@ -29,6 +30,15 @@ public:
 
     /// Desktop subscribed to TX notifications (ready to receive).
     bool isReady() const;
+
+    /// Link is encrypted (bonded with passkey).
+    bool isEncrypted() const;
+
+    /// 6-digit passkey the desktop must type right now, or 0 if none pending.
+    uint32_t pendingPasskey() const
+    {
+        return _passkey.load();
+    }
 
     /// Pop the next complete JSON line, if any.
     bool takeLine(std::string& out);
@@ -48,6 +58,7 @@ public:
 private:
     BuddyLink() = default;
     static void rx_trampoline(const uint8_t* data, uint16_t len);
+    static void passkey_trampoline(uint32_t passkey, bool show);
     void onRx(const uint8_t* data, uint16_t len);
 
     static constexpr size_t MAX_LINE_BYTES = 8 * 1024;  // spec: events > 4 KB are dropped upstream
@@ -59,6 +70,7 @@ private:
     std::deque<std::string> _lines;
     uint32_t _dropped = 0;
     bool _started     = false;
+    std::atomic<uint32_t> _passkey{0};
 };
 
 }  // namespace buddy

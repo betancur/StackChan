@@ -64,13 +64,15 @@ static struct ble_gatt_svc_def nus_svcs[] = {
                 {
                     .uuid       = &nus_rx_uuid.u,
                     .access_cb  = nus_access,
-                    .flags      = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+                    .flags      = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC |
+                                  BLE_GATT_CHR_F_WRITE_AUTHEN,
                     .val_handle = &s_rx_handle,
                 },
                 {
                     .uuid       = &nus_tx_uuid.u,
                     .access_cb  = nus_access,
-                    .flags      = BLE_GATT_CHR_F_NOTIFY,
+                    .flags      = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC |
+                                  BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHEN,
                     .val_handle = &s_tx_handle,
                 },
                 {

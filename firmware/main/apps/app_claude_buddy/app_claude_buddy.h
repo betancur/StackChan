@@ -86,6 +86,7 @@ private:
     void showDecisionButtons(bool show);
     void showOverlay(bool show);
     void refreshOverlay();
+    void showPasskey(uint32_t passkey);
 
     // ── Sleep / backlight ─────────────────────────────────────────────────────
     void noteActivity();
@@ -141,6 +142,10 @@ private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_deny;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _overlay;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _overlay_label;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _pair_panel;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_title;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_code;
+    uint32_t _shown_passkey = 0;
 
     static constexpr uint32_t LINK_TIMEOUT_MS     = 30 * 1000;   // spec: dead if no snapshot in ~30 s
     static constexpr uint32_t TRANSIENT_MS        = 3200;
