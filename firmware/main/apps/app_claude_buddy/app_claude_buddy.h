@@ -188,7 +188,7 @@ private:
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
     static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
     static constexpr uint32_t DAYS_SAVE_EVERY_MS  = 60 * 1000;
-    static constexpr uint32_t CLOCK_AFTER_MS      = 10 * 60 * 1000;  // idle/sleep → clock face
+    static constexpr uint32_t CLOCK_AFTER_MS      = 3 * 60 * 1000;   // idle/sleep → clock face
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
     static constexpr uint32_t ESCALATE_AFTER_MS   = 60 * 1000;  // prompt unanswered → escalate
     static constexpr uint32_t REMINDER_EVERY_MS   = 30 * 1000;
