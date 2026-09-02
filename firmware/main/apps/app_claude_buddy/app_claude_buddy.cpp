@@ -1046,20 +1046,17 @@ void AppClaudeBuddy::createUi()
     _clock_panel->onClick().connect([this]() { _screen_clicked = true; });
 
     _clock_time = std::make_unique<Label>(_clock_panel->get());
-    _clock_time->setTextFont(&MontserratSemiBold26);
+    _clock_time->setTextFont(&lv_font_montserrat_48);  // enabled via CONFIG_LV_FONT_MONTSERRAT_48
     _clock_time->setTextColor(lv_color_hex(THEME_PRIMARY));
     _clock_time->setText("--:--");
     _clock_time->align(LV_ALIGN_CENTER, 0, -14);
-    // No large font in this build: scale the 26 px face ×2.6 (renders as a bitmap)
-    lv_obj_set_style_transform_scale(_clock_time->get(), 666, 0);
-    lv_obj_set_style_transform_pivot_x(_clock_time->get(), LV_PCT(50), 0);
-    lv_obj_set_style_transform_pivot_y(_clock_time->get(), LV_PCT(50), 0);
+    lv_obj_set_style_text_letter_space(_clock_time->get(), 4, 0);
 
     _clock_date = std::make_unique<Label>(_clock_panel->get());
     _clock_date->setTextFont(&lv_font_montserrat_16);
     _clock_date->setTextColor(lv_color_hex(0x9A9A9A));
     _clock_date->setText("");
-    _clock_date->align(LV_ALIGN_CENTER, 0, 52);
+    _clock_date->align(LV_ALIGN_CENTER, 0, 34);
     _clock_panel->setHidden(true);
 
     // Pairing passkey panel (shown while macOS asks for the 6-digit code)
