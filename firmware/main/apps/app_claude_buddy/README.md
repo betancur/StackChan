@@ -27,7 +27,8 @@ Si un lado pierde la clave, el cifrado falla y macOS **no** vuelve a emparejar p
 | attention | Una herramienta espera permiso | Mira hacia arriba, LEDs parpadeando, botones Approve y Deny en pantalla y sonido de alerta. La cara y el color dependen del riesgo del comando (ver abajo). |
 | celebrate | Sube de nivel (cada 50K tokens) | Cara feliz, meneo de cabeza, LEDs arcoíris, texto "Level N!". |
 | dizzy | Se sacude el robot | Ojos en espiral durante unos segundos. |
-| heart | Aprobación en menos de cinco segundos | Corazones flotando y LEDs rosa. |
+| heart | Aprobación en menos de cinco segundos | Corazones flotando, guiño y LEDs rosa. |
+| grumpy | Denegación | Cara de enfado con venita, LEDs rojos y sacudida de cabeza. |
 
 ### Riesgo del comando
 
@@ -56,7 +57,7 @@ Clips propios estilo 8-bit sintetizados por `tools/make_buddy_sfx.py` (Ogg Opus,
 ## Controles
 
 - Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones, la última línea del transcript y el gráfico de tokens por día de la última semana. Se cierra solo a los diez segundos o al tocarlo.
-- Con una solicitud pendiente, tocar la cabeza del robot equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s (el servo al subir la cabeza puede activar el sensor).
+- Con una solicitud pendiente, un toque real en la cabeza (pulsar y soltar en menos de 1.5 s) equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s. El sensor capacitivo deriva a lecturas uniformes en los tres pads durante minutos; el HAL las ignora, exige intensidad 2 o más y rearma el estado a los 3 s, así que las caricias (deslizar el dedo entre pads) siguen dando corazones.
 - El indicador de inicio cierra la app y devuelve al launcher (warm reboot: NimBLE no puede reiniciarse en caliente).
 
 ## Protocolo
