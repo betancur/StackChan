@@ -51,7 +51,7 @@ Alerta al llegar la solicitud, recordatorio en el escalado, éxito al aprobar, v
 
 ## Controles
 
-- Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones y las últimas líneas del transcript. Se cierra solo a los diez segundos o al tocarlo.
+- Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones, la última línea del transcript y el gráfico de tokens por día de la última semana. Se cierra solo a los diez segundos o al tocarlo.
 - Con una solicitud pendiente, tocar la cabeza del robot equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s (el servo al subir la cabeza puede activar el sensor).
 - El indicador de inicio cierra la app y devuelve al launcher (warm reboot: NimBLE no puede reiniciarse en caliente).
 
@@ -73,9 +73,11 @@ Mensajes que el robot envía:
 - Acuse de cada comando: `{"ack":"<cmd>","ok":true|false,"n":0}`.
 - Respuesta de `status` con nombre, batería, memoria libre, tiempo encendido, estadísticas y `sec:true` cuando el enlace está cifrado.
 
-## Persistencia
+## Persistencia y estadísticas
 
 En NVS (namespace `buddy`) se guardan el nombre del dispositivo, el nombre del propietario y los contadores de aprobaciones, denegaciones, aprobaciones rápidas y siestas. El nivel se deriva de los tokens acumulados y no se guarda.
+
+Además se guarda un historial de los últimos 7 días (fecha local, tokens de salida del día según el `tokens_today` del escritorio, aprobaciones y denegaciones). El overlay muestra un gráfico de barras con esos 7 días: el valor compacto sobre cada barra, la inicial del día debajo y el día actual en naranja. El día cambia con la hora local que sincroniza el escritorio; el historial se escribe en NVS como mucho una vez por minuto.
 
 ## Seguridad
 

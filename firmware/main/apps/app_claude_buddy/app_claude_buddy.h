@@ -92,6 +92,9 @@ private:
     void showOverlay(bool show);
     void refreshOverlay();
     void showPasskey(uint32_t passkey);
+    void refreshChart();
+    static std::string compactNumber(uint32_t v);
+    static uint32_t localDate();  // yyyymmdd, 0 if the clock is not set
 
     // ── Sleep / backlight ─────────────────────────────────────────────────────
     void noteActivity();
@@ -156,6 +159,14 @@ private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_deny;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _overlay;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _overlay_label;
+    lv_obj_t* _chart                 = nullptr;
+    lv_chart_series_t* _series_past  = nullptr;
+    lv_chart_series_t* _series_today = nullptr;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _day_labels[7];
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _bar_values[7];
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _chart_title;
+    bool     _days_dirty       = false;
+    uint32_t _last_days_save_ms = 0;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _pair_panel;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_title;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _pair_code;
@@ -168,6 +179,7 @@ private:
     static constexpr uint32_t TURN_SHOW_MS        = 7000;
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
     static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
+    static constexpr uint32_t DAYS_SAVE_EVERY_MS  = 60 * 1000;
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
     static constexpr uint32_t ESCALATE_AFTER_MS   = 60 * 1000;  // prompt unanswered → escalate
     static constexpr uint32_t REMINDER_EVERY_MS   = 30 * 1000;

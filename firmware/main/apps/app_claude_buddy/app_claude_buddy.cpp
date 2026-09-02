@@ -51,6 +51,7 @@ void AppClaudeBuddy::onOpen()
     mclog::tagInfo(TAG, "onOpen");
 
     _store.load();
+    _store.loadDays();
 
     {
         LvglLockGuard lock;
@@ -205,6 +206,13 @@ void AppClaudeBuddy::onRunning()
     // ── Resolve effective mood ───────────────────────────────────────────────
     setMood(_transient_active ? _transient : baseMood());
 
+    // ── Persist daily history (throttled) ───────────────────────────────────
+    if (_days_dirty && now - _last_days_save_ms >= DAYS_SAVE_EVERY_MS) {
+        _last_days_save_ms = now;
+        _days_dirty        = false;
+        _store.saveDays();
+    }
+
     // ── Attention: escalation + look at the person ───────────────────────────
     if (_mood == Mood::Attention && _snap.prompt.present) {
         updateAttention();
@@ -232,6 +240,10 @@ void AppClaudeBuddy::onClose()
     _head_touch_conn = -1;
 
     buddy::LookTracker::instance().stop();
+    if (_days_dirty) {
+        _store.saveDays();
+        _days_dirty = false;
+    }
     GetHAL().showRgbColor(0, 0, 0);
     if (_dimmed) {
         GetHAL().setBackLightBrightness(75);
@@ -344,6 +356,15 @@ void AppClaudeBuddy::handleSnapshot(JsonObjectConst doc)
         mclog::tagInfo(TAG, "level up → {}", lvl);
         buddy::play_sfx(buddy::Sfx::LevelUp);
         startTransient(Mood::Celebrate, TRANSIENT_MS);
+    }
+
+    // Per-day history: keep the day's token high-water mark
+    if (uint32_t d = localDate()) {
+        auto& t = _store.today(d);
+        if (s.tokens_today > t.tokens) {
+            t.tokens    = s.tokens_today;
+            _days_dirty = true;
+        }
     }
 
     _snap             = std::move(s);
@@ -519,6 +540,12 @@ void AppClaudeBuddy::decide(bool approve)
         _store.deny++;
     }
     _store.saveStats();
+    if (uint32_t d = localDate()) {
+        auto& t = _store.today(d);
+        if (approve) t.appr++; else t.deny++;
+        _store.saveDays();
+        _days_dirty = false;
+    }
 
     // Clear locally; the next snapshot is authoritative
     _snap.prompt = Prompt{};
@@ -925,10 +952,56 @@ void AppClaudeBuddy::createUi()
     _overlay_label = std::make_unique<Label>(_overlay->get());
     _overlay_label->setTextFont(&lv_font_montserrat_14);
     _overlay_label->setTextColor(lv_color_hex(0xEDEDED));
-    _overlay_label->setWidth(300);
-    _overlay_label->setLongMode(LV_LABEL_LONG_WRAP);
+    _overlay_label->setSize(300, 112);              // 7 lines of the 14 px font, never past the chart
+    _overlay_label->setLongMode(LV_LABEL_LONG_CLIP);
     _overlay_label->align(LV_ALIGN_TOP_LEFT, 0, 0);
     _overlay_label->setText("");
+
+    // 7-day token chart at the bottom of the overlay
+    _chart_title = std::make_unique<Label>(_overlay->get());
+    _chart_title->setTextFont(&lv_font_montserrat_14);
+    _chart_title->setTextColor(lv_color_hex(0x9A9A9A));
+    _chart_title->setText("Claude output tokens per day (last 7 days)");
+    _chart_title->align(LV_ALIGN_TOP_LEFT, 0, 114);
+
+    _chart = lv_chart_create(_overlay->get());
+    lv_obj_set_size(_chart, 300, 70);
+    lv_obj_align(_chart, LV_ALIGN_TOP_MID, 0, 132);
+    lv_chart_set_type(_chart, LV_CHART_TYPE_BAR);
+    lv_chart_set_point_count(_chart, buddy::BuddyStore::DAYS);
+    lv_chart_set_div_line_count(_chart, 0, 0);
+    lv_chart_set_range(_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+    lv_obj_set_style_bg_color(_chart, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_chart, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(_chart, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(_chart, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(_chart, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(_chart, 10, LV_PART_MAIN);   // gap between days
+    lv_obj_set_style_pad_column(_chart, 0, LV_PART_ITEMS);   // series overlap (one bar per day)
+    lv_obj_set_style_radius(_chart, 3, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(_chart, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_remove_flag(_chart, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(_chart, LV_OBJ_FLAG_CLICKABLE);
+    _series_past  = lv_chart_add_series(_chart, lv_color_hex(0x6E5A4E), LV_CHART_AXIS_PRIMARY_Y);
+    _series_today = lv_chart_add_series(_chart, lv_color_hex(THEME_PRIMARY), LV_CHART_AXIS_PRIMARY_Y);
+
+    for (int i = 0; i < buddy::BuddyStore::DAYS; i++) {
+        _day_labels[i] = std::make_unique<Label>(_overlay->get());
+        _day_labels[i]->setTextFont(&lv_font_montserrat_14);
+        _day_labels[i]->setTextColor(lv_color_hex(0x9A9A9A));
+        _day_labels[i]->setText("-");
+        // 300 px wide chart, 7 slots → centre of slot i
+        _day_labels[i]->align(LV_ALIGN_BOTTOM_LEFT, 4 + i * 300 / 7 + 300 / 14 - 5, 0);
+
+        // value printed on top of each bar, so a bar reads on its own
+        _bar_values[i] = std::make_unique<Label>(_overlay->get());
+        _bar_values[i]->setTextFont(&lv_font_montserrat_14);
+        _bar_values[i]->setTextColor(lv_color_hex(0xEDEDED));
+        _bar_values[i]->setText("");
+        _bar_values[i]->setWidth(300 / 7);
+        _bar_values[i]->setTextAlign(LV_TEXT_ALIGN_CENTER);
+        _bar_values[i]->align(LV_ALIGN_TOP_LEFT, i * 300 / 7, 132);
+    }
     _overlay->setHidden(true);
 
     // Pairing passkey panel (shown while macOS asks for the 6-digit code)
@@ -979,6 +1052,13 @@ void AppClaudeBuddy::showPasskey(uint32_t passkey)
 
 void AppClaudeBuddy::destroyUi()
 {
+    for (auto& l : _day_labels) l.reset();
+    for (auto& l : _bar_values) l.reset();
+    _chart_title.reset();
+    if (_chart) {
+        lv_obj_delete(_chart);
+        _chart = nullptr;
+    }
     _pair_code.reset();
     _pair_title.reset();
     _pair_panel.reset();
@@ -1041,11 +1121,83 @@ void AppClaudeBuddy::refreshOverlay()
              fit(_snap.prompt.tool + " " + _snap.prompt.hint, 40) + "\n";
     }
     if (!_snap.msg.empty()) t += "> " + fit(_snap.msg, 44) + "\n";
-    for (const auto& e : _snap.entries) {
-        t += "  " + fit(e, 44) + "\n";
+    if (!_snap.entries.empty()) {
+        t += "  " + fit(_snap.entries.front(), 44) + "\n";  // one line; the chart needs the rest
     }
 
     _overlay_label->setText(t);
+    refreshChart();
+}
+
+void AppClaudeBuddy::refreshChart()
+{
+    if (!_chart) return;
+    constexpr int N = buddy::BuddyStore::DAYS;
+
+    uint32_t maxv = 1000;
+    for (int i = 0; i < N; i++) maxv = std::max(maxv, _store.days[i].tokens);
+    // round the axis up to a friendly number
+    uint32_t step = 1000;
+    while (step * 10 < maxv) step *= 10;
+    uint32_t range = ((maxv + step - 1) / step) * step;
+    lv_chart_set_range(_chart, LV_CHART_AXIS_PRIMARY_Y, 0, static_cast<int32_t>(range));
+
+    static const char* wd = "SMTWTFS";
+    for (int i = 0; i < N; i++) {
+        // chart slot i ← days[N-1-i] (oldest left, today right)
+        const auto& d = _store.days[N - 1 - i];
+        int32_t v     = d.date ? static_cast<int32_t>(d.tokens) : LV_CHART_POINT_NONE;
+        bool is_today = (N - 1 - i) == 0 && d.date != 0;
+        lv_chart_set_value_by_id(_chart, _series_past, i, is_today ? LV_CHART_POINT_NONE : v);
+        lv_chart_set_value_by_id(_chart, _series_today, i, is_today ? v : LV_CHART_POINT_NONE);
+
+        char lbl[2] = {'-', 0};
+        if (d.date) {
+            struct tm tmv = {};
+            tmv.tm_year   = static_cast<int>(d.date / 10000) - 1900;
+            tmv.tm_mon    = static_cast<int>((d.date / 100) % 100) - 1;
+            tmv.tm_mday   = static_cast<int>(d.date % 100);
+            tmv.tm_hour   = 12;
+            mktime(&tmv);
+            lbl[0] = wd[tmv.tm_wday];
+        }
+        if (_day_labels[i]) {
+            _day_labels[i]->setText(lbl);
+            _day_labels[i]->setTextColor(lv_color_hex(is_today ? THEME_PRIMARY : 0x9A9A9A));
+        }
+        if (_bar_values[i]) {
+            if (d.date) {
+                // chart at y=132, 70 px tall, 4 px padding → bar top; label sits just above it
+                const int inner_h = 70 - 8;
+                int bar_top       = 132 + 4 + inner_h - static_cast<int>(static_cast<uint64_t>(d.tokens) * inner_h / range);
+                int y             = std::max(132, bar_top - 16);
+                _bar_values[i]->setText(compactNumber(d.tokens));
+                _bar_values[i]->align(LV_ALIGN_TOP_LEFT, i * 300 / 7, y);
+            } else {
+                _bar_values[i]->setText("");
+            }
+        }
+    }
+    lv_chart_refresh(_chart);
+}
+
+std::string AppClaudeBuddy::compactNumber(uint32_t v)
+{
+    char buf[16];
+    if (v >= 1000000)    snprintf(buf, sizeof(buf), "%.1fM", v / 1000000.0);
+    else if (v >= 100000) snprintf(buf, sizeof(buf), "%luk", (unsigned long)(v / 1000));
+    else if (v >= 1000)   snprintf(buf, sizeof(buf), "%.1fk", v / 1000.0);
+    else                  snprintf(buf, sizeof(buf), "%lu", (unsigned long)v);
+    return buf;
+}
+
+uint32_t AppClaudeBuddy::localDate()
+{
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (t.tm_year + 1900 < 2020) return 0;  // clock not synced yet
+    return static_cast<uint32_t>((t.tm_year + 1900) * 10000 + (t.tm_mon + 1) * 100 + t.tm_mday);
 }
 
 // ── Sleep / backlight ─────────────────────────────────────────────────────────
