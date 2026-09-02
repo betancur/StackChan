@@ -1,0 +1,153 @@
+/*
+ * AppClaudeBuddy — Stack-Chan as a Claude Desktop "Hardware Buddy".
+ *
+ * Implements the BLE (Nordic UART) protocol from
+ * https://github.com/anthropics/claude-desktop-buddy so Claude for macOS /
+ * Windows (developer mode → "Open Hardware Buddy…") can drive the robot.
+ *
+ * Buddy states → Stack-Chan avatar:
+ *   sleep      bridge not connected      → sleepy face, "Zzz", head down, LEDs off
+ *   idle       connected, nothing urgent → idle motion + idle expressions
+ *   busy       sessions running          → sweat drop, slow motion, blue breathing LEDs
+ *   attention  approval pending          → doubt face, looks up, orange blinking LEDs,
+ *                                          on-screen Approve / Deny buttons (head-pet = approve)
+ *   celebrate  level up (50K tokens)     → happy face, head wiggle, rainbow LEDs
+ *   dizzy      device shaken             → ImuEventModifier (dizzy eyes)
+ *   heart      approved within 5 s       → hearts + pink LEDs
+ *
+ * Screen tap toggles an info overlay (sessions, tokens, transcript entries).
+ */
+#pragma once
+#include "buddy_link.h"
+#include "buddy_store.h"
+#include <mooncake.h>
+#include <smooth_lvgl.hpp>
+#include <ArduinoJson.hpp>
+#include <atomic>
+#include <memory>
+#include <string>
+#include <vector>
+
+class AppClaudeBuddy : public mooncake::AppAbility {
+public:
+    AppClaudeBuddy();
+
+    void onCreate() override;
+    void onOpen() override;
+    void onRunning() override;
+    void onClose() override;
+
+private:
+    enum class Mood { Sleep, Idle, Busy, Attention, Celebrate, Heart };
+
+    struct Prompt {
+        bool present = false;
+        std::string id;
+        std::string tool;
+        std::string hint;
+    };
+
+    struct Snapshot {
+        int total   = 0;
+        int running = 0;
+        int waiting = 0;
+        std::string msg;
+        std::vector<std::string> entries;
+        uint32_t tokens       = 0;
+        uint32_t tokens_today = 0;
+        Prompt prompt;
+    };
+
+    // ── Protocol ──────────────────────────────────────────────────────────────
+    void handleLine(const std::string& line);
+    void handleSnapshot(ArduinoJson::JsonObjectConst doc);
+    void handleTurn(ArduinoJson::JsonObjectConst doc);
+    void handleTimeSync(ArduinoJson::JsonArrayConst arr);
+    void handleCommand(ArduinoJson::JsonObjectConst doc);
+    void sendAck(const char* cmd, bool ok, int n = 0, const char* error = nullptr);
+    void sendStatus();
+    void sendPermission(const std::string& id, bool approve);
+    void decide(bool approve);
+
+    // ── Mood / avatar ─────────────────────────────────────────────────────────
+    Mood baseMood() const;
+    void setMood(Mood mood, bool force = false);
+    void startTransient(Mood mood, uint32_t durationMs);
+    void refreshSpeech();
+    void updateLeds();
+    void updateCelebrateWiggle();
+    void clearTransientModifiers();
+    static const char* moodName(Mood m);
+    static std::string fit(const std::string& s, size_t max);
+
+    // ── UI ────────────────────────────────────────────────────────────────────
+    void createUi();
+    void destroyUi();
+    void showDecisionButtons(bool show);
+    void showOverlay(bool show);
+    void refreshOverlay();
+
+    // ── Sleep / backlight ─────────────────────────────────────────────────────
+    void noteActivity();
+    void checkDim();
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    buddy::BuddyStore _store;
+    Snapshot _snap;
+    bool _has_snapshot        = false;
+    uint32_t _last_snapshot_ms = 0;
+    bool _was_linked          = false;  // last computed "bridge alive" value
+
+    Mood _mood            = Mood::Sleep;
+    Mood _transient       = Mood::Idle;
+    bool _transient_active = false;
+    uint32_t _transient_until = 0;
+
+    int _level            = -1;  // -1 = not yet baselined
+    uint32_t _prompt_seen_ms = 0;
+    std::string _prompt_seen_id;
+
+    std::string _turn_text;
+    uint32_t _turn_until = 0;
+
+    // Modifier / decorator IDs
+    int _idle_motion_id = -1;
+    int _idle_expr_id   = -1;
+    int _sweat_id       = -1;
+    int _heart_id       = -1;
+
+    // Signal connections
+    int _head_touch_conn = -1;
+
+    // Flags set from signal/LVGL context, consumed in onRunning()
+    std::atomic<bool> _screen_clicked{false};
+    std::atomic<bool> _head_pressed{false};
+    std::atomic<bool> _approve_clicked{false};
+    std::atomic<bool> _deny_clicked{false};
+    std::atomic<bool> _overlay_clicked{false};
+
+    // Timers
+    uint32_t _led_tick        = 0;
+    uint32_t _wiggle_tick     = 0;
+    bool _wiggle_phase        = false;
+    uint16_t _hue             = 0;
+    uint32_t _overlay_until   = 0;
+    uint32_t _last_activity_ms = 0;
+    bool _dimmed              = false;
+
+    // LVGL widgets
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_approve;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_deny;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _overlay;
+    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _overlay_label;
+
+    static constexpr uint32_t LINK_TIMEOUT_MS     = 30 * 1000;   // spec: dead if no snapshot in ~30 s
+    static constexpr uint32_t TRANSIENT_MS        = 3200;
+    static constexpr uint32_t FAST_APPROVE_MS     = 5000;
+    static constexpr uint32_t TURN_SHOW_MS        = 7000;
+    static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
+    static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
+    static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;
+    static constexpr uint32_t THEME_PRIMARY       = 0xD97757;  // Claude orange
+    static constexpr uint32_t THEME_DARK          = 0x3A2418;
+};

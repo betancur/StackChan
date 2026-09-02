@@ -26,6 +26,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "services/bas/ble_svc_bas.h"
 #include "bleprph.h"
+#include "nus_svc.h"
 #include "services/ans/ble_svc_ans.h"
 #include "esp_heap_caps.h"
 
@@ -322,9 +323,17 @@ void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
     }
 }
 
-int gatt_svr_init(bool use_alt_uuid)
+int gatt_svr_init(ble_prph_mode_t mode)
 {
     int rc;
+
+    if (mode == BLE_PRPH_MODE_NUS) {
+        ble_svc_gap_init();
+        ble_svc_gatt_init();
+        return nus_svc_register();
+    }
+
+    bool use_alt_uuid = (mode == BLE_PRPH_MODE_STACKCHAN_ALT);
 
     /* Allocate buffers in PSRAM */
     stackchan_motion_data = (char *)heap_caps_malloc(STACKCHAN_MAX_JSON_LEN, MALLOC_CAP_SPIRAM);
@@ -481,4 +490,9 @@ void stackchan_ble_set_conn_handle(uint16_t conn_handle)
 bool stackchan_ble_is_connected(void)
 {
     return (g_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+}
+
+uint16_t stackchan_ble_get_conn_handle(void)
+{
+    return g_conn_handle;
 }

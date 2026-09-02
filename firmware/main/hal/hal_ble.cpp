@@ -80,6 +80,23 @@ bool Hal::isBleConnected()
     return stackchan_ble_is_connected();
 }
 
+void Hal::startBuddyBleServer(std::string_view deviceName)
+{
+    std::string name(deviceName);
+    mclog::tagInfo(_tag, "start buddy ble server (NUS) as \"{}\"", name);
+
+    static stackchan_ble_callbacks_t ble_callbacks = {
+        .motion_cb       = nullptr,
+        .avatar_cb       = nullptr,
+        .config_cb       = nullptr,
+        .rgb_cb          = nullptr,
+        .battery_read_cb = _handle_ble_battery_read,
+    };
+    stackchan_ble_register_callbacks(&ble_callbacks);
+
+    ble_prph_init_ex(BLE_PRPH_MODE_NUS, name.c_str());
+}
+
 /* -------------------------------------------------------------------------- */
 /*                              App config server                             */
 /* -------------------------------------------------------------------------- */

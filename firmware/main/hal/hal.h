@@ -225,6 +225,9 @@ public:
 
     void startBleServer();
     bool isBleConnected();
+    // Nordic UART Service peripheral for the Claude Desktop Buddy protocol.
+    // Name must start with "Claude" for the desktop app to list it.
+    void startBuddyBleServer(std::string_view deviceName);
     void startAppConfigServer();
     bool isAppConfiged();
     void resetAppConfiged();

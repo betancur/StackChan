@@ -29,6 +29,7 @@ extern "C" void app_main(void)
     // Install apps
     GetMooncake().installApp(std::make_unique<AppLauncher>());
     GetMooncake().installApp(std::make_unique<AppRozAgent>());
+    GetMooncake().installApp(std::make_unique<AppClaudeBuddy>());
     GetMooncake().installApp(std::make_unique<AppAiAgent>());
     // AppAvatar, AppDance, AppEzdata, AppAppCenter removed — not needed for this build
     GetMooncake().installApp(std::make_unique<AppEspnowControl>());

@@ -163,10 +163,27 @@ void stackchan_ble_set_conn_handle(uint16_t conn_handle);
  */
 bool stackchan_ble_is_connected(void);
 
+/**
+ * Get current BLE connection handle (BLE_HS_CONN_HANDLE_NONE if disconnected)
+ */
+uint16_t stackchan_ble_get_conn_handle(void);
+
+/**
+ * Peripheral operating modes. Selects which GATT services are registered and
+ * what is advertised. The NimBLE host can only be initialised once per boot,
+ * so the mode is fixed until the next (warm) reboot.
+ */
+typedef enum {
+    BLE_PRPH_MODE_STACKCHAN = 0,  /* Stack-Chan service (app / dance) */
+    BLE_PRPH_MODE_STACKCHAN_ALT,  /* Stack-Chan service, alternate UUID (setup) */
+    BLE_PRPH_MODE_NUS,            /* Nordic UART Service (Claude Desktop Buddy) */
+} ble_prph_mode_t;
+
 void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);
-int gatt_svr_init(bool use_alt_uuid);
+int gatt_svr_init(ble_prph_mode_t mode);
 
 void ble_prph_init(bool use_alt_uuid);
+void ble_prph_init_ex(ble_prph_mode_t mode, const char *device_name);
 
 #ifdef __cplusplus
 }

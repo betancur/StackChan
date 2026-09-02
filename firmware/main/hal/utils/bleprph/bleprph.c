@@ -23,6 +23,7 @@
 
 /* BLE */
 #include "bleprph.h"
+#include "nus_svc.h"
 #include "console/console.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -77,7 +78,8 @@ static uint16_t cids[MYNEWT_VAL(BLE_EATT_CHAN_NUM)];
 static uint16_t bearers;
 #endif
 
-static bool s_use_alt_uuid = false;
+static bool s_use_alt_uuid       = false;
+static ble_prph_mode_t s_mode    = BLE_PRPH_MODE_STACKCHAN;
 
 void ble_store_config_init(void);
 
@@ -261,7 +263,9 @@ static void bleprph_advertise(void)
     ble_uuid128_t stackchan_uuid     = BLE_UUID128_INIT(STACKCHAN_SVC_UUID_BASE);
     ble_uuid128_t stackchan_uuid_alt = BLE_UUID128_INIT(STACKCHAN_SVC_UUID_BASE_ALT);
 
-    if (s_use_alt_uuid) {
+    if (s_mode == BLE_PRPH_MODE_NUS) {
+        fields.uuids128 = &nus_svc_uuid;
+    } else if (s_use_alt_uuid) {
         fields.uuids128 = &stackchan_uuid_alt;
     } else {
         fields.uuids128 = &stackchan_uuid;
@@ -290,9 +294,11 @@ static void bleprph_advertise(void)
     rsp_fields.tx_pwr_lvl_is_present = 1;
     rsp_fields.tx_pwr_lvl            = BLE_HS_ADV_TX_PWR_LVL_AUTO;
 
-    // 厂商数据放在扫描响应
-    rsp_fields.mfg_data     = mfg_data;
-    rsp_fields.mfg_data_len = sizeof(mfg_data);
+    // 厂商数据放在扫描响应 (omitted in NUS mode: the long "Claude ..." name needs the space)
+    if (s_mode != BLE_PRPH_MODE_NUS) {
+        rsp_fields.mfg_data     = mfg_data;
+        rsp_fields.mfg_data_len = sizeof(mfg_data);
+    }
 
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
@@ -381,6 +387,7 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
             MODLOG_DFLT(INFO, "disconnect; reason=%d ", event->disconnect.reason);
             bleprph_print_conn_desc(&event->disconnect.conn);
             stackchan_ble_set_conn_handle(BLE_HS_CONN_HANDLE_NONE);
+            nus_svc_on_disconnect();
             MODLOG_DFLT(INFO, "\n");
 
             /* Connection terminated; resume advertising. */
@@ -433,6 +440,7 @@ static int bleprph_gap_event(struct ble_gap_event *event, void *arg)
                         event->subscribe.conn_handle, event->subscribe.attr_handle, event->subscribe.reason,
                         event->subscribe.prev_notify, event->subscribe.cur_notify, event->subscribe.prev_indicate,
                         event->subscribe.cur_indicate);
+            nus_svc_on_subscribe(event->subscribe.attr_handle, event->subscribe.cur_notify != 0);
             return 0;
 
         case BLE_GAP_EVENT_MTU:
@@ -638,7 +646,13 @@ void bleprph_host_task(void *param)
 
 void ble_prph_init(bool use_alt_uuid)
 {
-    s_use_alt_uuid = use_alt_uuid;
+    ble_prph_init_ex(use_alt_uuid ? BLE_PRPH_MODE_STACKCHAN_ALT : BLE_PRPH_MODE_STACKCHAN, "StackChan");
+}
+
+void ble_prph_init_ex(ble_prph_mode_t mode, const char *device_name)
+{
+    s_mode         = mode;
+    s_use_alt_uuid = (mode == BLE_PRPH_MODE_STACKCHAN_ALT);
     int rc;
     esp_err_t ret;
 
@@ -689,13 +703,13 @@ void ble_prph_init(bool use_alt_uuid)
 #endif
 
 #if MYNEWT_VAL(BLE_GATTS)
-    rc = gatt_svr_init(use_alt_uuid);
+    rc = gatt_svr_init(mode);
     assert(rc == 0);
 #endif
 
 #if CONFIG_BT_NIMBLE_GAP_SERVICE
-    /* Set the default device name. */
-    rc = ble_svc_gap_device_name_set("StackChan");
+    /* Set the device name (copied into the GAP service's own buffer). */
+    rc = ble_svc_gap_device_name_set(device_name ? device_name : "StackChan");
     assert(rc == 0);
 #endif
 
