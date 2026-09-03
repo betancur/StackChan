@@ -808,9 +808,8 @@ void AppClaudeBuddy::refreshSpeech()
         }
         case Mood::Attention:
             if (_snap.prompt.present && _prompt_is_question) {
-                std::string t = "Claude has a question!\nAnswer on the Mac";
-                if (!_snap.msg.empty()) t = "Question:\n" + fit(_snap.msg, 36);
-                av.setSpeech(t);
+                // The desktop's msg is just "tool AskUserQuestion" here: not useful
+                av.setSpeech("Claude has a question!\nAnswer on the Mac");
                 return;
             }
             if (_snap.prompt.present) {
