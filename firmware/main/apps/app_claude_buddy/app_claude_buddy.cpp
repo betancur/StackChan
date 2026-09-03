@@ -10,6 +10,7 @@
 #include <stackchan/stackchan.h>
 #include <apps/common/common.h>
 #include <esp_heap_caps.h>
+#include <board.h>
 #include <sys/time.h>
 #include <cstdio>
 #include <cctype>
@@ -101,7 +102,18 @@ void AppClaudeBuddy::onOpen()
     for (auto& c : suffix) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
     buddy::BuddyLink::instance().start("Claude StackChan-" + suffix);
 
+    // Servos: release torque when idle (biggest idle consumer) and re-sync
+    // angles before the next move, same policy XiaoZhi mode uses
+    {
+        LvglLockGuard lock;
+        auto& motion = GetStackChan().motion();
+        motion.setAutoAngleSyncEnabled(true);
+        motion.setAutoTorqueReleaseEnabled(true);
+    }
+
     _last_activity_ms = GetHAL().millis();
+    _bat_tick         = 0;  // poll right away
+    checkBattery();
     setMood(Mood::Sleep, true);
 }
 
@@ -282,6 +294,16 @@ void AppClaudeBuddy::onRunning()
     // ── Attention: escalation + look at the person ───────────────────────────
     if (_mood == Mood::Attention && _snap.prompt.present) {
         updateAttention();
+    }
+
+    // ── Battery poll / low-battery alert ─────────────────────────────────────
+    checkBattery();
+
+    // ── Board power-save timer: keep it fed while the bridge is alive. When the
+    // Mac is gone and we run on battery, let the board dim/shut down on its own.
+    if (_was_linked && _mood != Mood::Sleep && now - _keepalive_tick >= 30000) {
+        _keepalive_tick = now;
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::BALANCED);
     }
 
     // ── Animations ───────────────────────────────────────────────────────────
@@ -701,14 +723,15 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             av.setEmotion(avatar::Emotion::Sleepy);
             av.mouth().setWeight(10);
             sc.motion().moveWithSpeed(0, 0, 80);
-            GetHAL().showRgbColor(0, 0, 0);
+            led(0, 0, 0);
             break;
 
         case Mood::Idle:
             av.setEmotion(avatar::Emotion::Neutral);
-            _idle_motion_id = sc.addModifier(std::make_unique<IdleMotionModifier>());
+            _idle_motion_id = _on_battery ? sc.addModifier(std::make_unique<IdleMotionModifier>(9000, 18000))
+                                          : sc.addModifier(std::make_unique<IdleMotionModifier>());
             _idle_expr_id   = sc.addModifier(std::make_unique<IdleExpressionModifier>());
-            GetHAL().showRgbColor(0, 0, 0);
+            led(0, 0, 0);
             break;
 
         case Mood::Busy:
@@ -755,7 +778,7 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             av.leftEye().setWeight(0);
             av.rightEye().setWeight(100);
             _wink_until = GetHAL().millis() + WINK_MS;
-            GetHAL().showRgbColor(70, 0, 30);
+            led(70, 0, 30);
             break;
 
         case Mood::Grumpy:
@@ -763,7 +786,7 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             av.mouth().setWeight(15);
             _angry_id = av.addDecorator(std::make_unique<avatar::AngryDecorator>(lv_screen_active(), 0, 450));
             _wiggle_tick = 0;
-            GetHAL().showRgbColor(110, 0, 0);
+            led(110, 0, 0);
             break;  // head shake in updateCelebrateWiggle()
     }
 
@@ -882,7 +905,7 @@ void AppClaudeBuddy::updateLeds()
             // slow blue breathing
             float phase = (now % 3000) / 3000.0f * 2.0f * 3.14159f;
             uint8_t v   = static_cast<uint8_t>(8 + 32 * (0.5f + 0.5f * sinf(phase)));
-            GetHAL().showRgbColor(0, v / 3, v);
+            led(0, v / 3, v);
             break;
         }
         case Mood::Attention: {
@@ -890,15 +913,15 @@ void AppClaudeBuddy::updateLeds()
             uint32_t period = escalated ? 180 : 400;
             bool on         = ((now / period) % 2) == 0;
             if (!on) {
-                GetHAL().showRgbColor(0, 0, 0);
+                led(0, 0, 0);
             } else if (_prompt_is_question) {
-                GetHAL().showRgbColor(0, 30, 110);
+                led(0, 30, 110);
             } else if (_prompt_risk == Risk::Danger) {
-                GetHAL().showRgbColor(110, 0, 0);
+                led(110, 0, 0);
             } else if (_prompt_risk == Risk::Caution) {
-                GetHAL().showRgbColor(100, 18, 0);
+                led(100, 18, 0);
             } else {
-                GetHAL().showRgbColor(90, 40, 0);
+                led(90, 40, 0);
             }
             break;
         }
@@ -906,10 +929,16 @@ void AppClaudeBuddy::updateLeds()
             uint8_t r, g, b;
             _hue = (_hue + 36) % 360;
             hue_to_rgb(_hue, 70, r, g, b);
-            GetHAL().showRgbColor(r, g, b);
+            led(r, g, b);
             break;
         }
         default:
+            if (_low_battery && (_mood == Mood::Idle || _mood == Mood::Sleep)) {
+                // slow red pulse: 2.5 s period
+                float phase = (now % 2500) / 2500.0f * 2.0f * 3.14159f;
+                uint8_t v   = static_cast<uint8_t>(4 + 40 * (0.5f + 0.5f * sinf(phase)));
+                GetHAL().showRgbColor(v, 0, 0);  // unscaled on purpose
+            }
             break;  // static colours set in setMood()
     }
 }
@@ -1219,8 +1248,11 @@ void AppClaudeBuddy::updateClock()
     char tbuf[8], dbuf[40];
     strftime(tbuf, sizeof(tbuf), "%H:%M", &t);
     strftime(dbuf, sizeof(dbuf), "%a %d %b", &t);
+    char line[64];
+    snprintf(line, sizeof(line), "%s   %d%%%s", dbuf, _bat_pct, _on_battery ? "" : " +");
     _clock_time->setText(tbuf);
-    _clock_date->setText(dbuf);
+    _clock_date->setText(line);
+    _clock_date->setTextColor(lv_color_hex(_low_battery ? 0xE04040 : 0x9A9A9A));
 }
 
 void AppClaudeBuddy::showPasskey(uint32_t passkey)
@@ -1303,6 +1335,9 @@ void AppClaudeBuddy::refreshOverlay()
     t += link.isReady() ? "  ·  linked\n" : (link.isConnected() ? "  ·  connecting\n" : "  ·  offline\n");
 
     char buf[96];
+    snprintf(buf, sizeof(buf), "Battery %d%% %s\n", _bat_pct,
+             _on_battery ? (_low_battery ? "LOW" : "on battery") : "on USB");
+    t += buf;
     snprintf(buf, sizeof(buf), "Sessions %d  (run %d / wait %d)\n", _snap.total, _snap.running, _snap.waiting);
     t += buf;
     snprintf(buf, sizeof(buf), "Tokens %lu  today %lu  Lv %d\n", (unsigned long)_snap.tokens,
@@ -1412,13 +1447,71 @@ void AppClaudeBuddy::noteActivity(const char* reason)
 
 void AppClaudeBuddy::checkDim()
 {
-    // Dim only while asleep; an active bridge keeps the screen on
-    if (_mood != Mood::Sleep) {
-        if (_dimmed) noteActivity();
+    // Dim while asleep or showing the clock; Claude working or a prompt keeps the screen on
+    bool quiet = (_mood == Mood::Sleep) || _clock_shown;
+    if (!quiet) {
+        if (_dimmed) noteActivity("screen needed");
         return;
     }
-    if (!_dimmed && static_cast<int32_t>(GetHAL().millis() - _last_activity_ms) >= static_cast<int32_t>(DIM_AFTER_MS)) {
+    uint32_t after = _on_battery ? DIM_AFTER_BAT_MS : DIM_AFTER_MS;
+    if (!_dimmed && static_cast<int32_t>(GetHAL().millis() - _last_activity_ms) >= static_cast<int32_t>(after)) {
         _dimmed = true;
-        GetHAL().setBackLightBrightness(20);
+        GetHAL().setBackLightBrightness(_on_battery ? DIM_LEVEL_BAT : DIM_LEVEL_USB);
     }
+}
+
+void AppClaudeBuddy::led(uint8_t r, uint8_t g, uint8_t b)
+{
+    if (_on_battery) {
+        r /= 2; g /= 2; b /= 2;
+    }
+    GetHAL().showRgbColor(r, g, b);
+}
+
+void AppClaudeBuddy::checkBattery()
+{
+    uint32_t now = GetHAL().millis();
+    if (_bat_tick != 0 && now - _bat_tick < BAT_POLL_MS) {
+        return;
+    }
+    _bat_tick = now;
+
+    int  pct      = GetHAL().getBatteryLevel();
+    bool charging = GetHAL().isBatteryCharging();
+    bool on_bat   = GetHAL().isBatteryDischarging();  // "not charging" also happens when full on USB
+    bool low      = on_bat && pct <= BAT_LOW_PCT;
+
+    if (on_bat != _on_battery) {
+        mclog::tagInfo(TAG, "power: {} ({}%)", on_bat ? "battery" : "external", pct);
+        if (!on_bat && _dimmed) {
+            GetHAL().setBackLightBrightness(NORMAL_BRIGHTNESS);
+            _dimmed = false;
+        }
+    }
+    _bat_pct    = pct;
+    _on_battery = on_bat;
+
+    if (low) {
+        bool first    = !_low_battery;
+        bool critical = pct <= BAT_CRITICAL_PCT;
+        bool remind   = critical && (now - _last_bat_warn_ms >= BAT_WARN_EVERY_MS);
+        if (first || remind) {
+            _last_bat_warn_ms = now;
+            mclog::tagWarn(TAG, "battery low: {}%", pct);
+            buddy::play_sfx(buddy::Sfx::Reminder);
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Battery %d%%!\nPlug me in", pct);
+            _turn_text  = msg;
+            _turn_until = now + 8000;
+            LvglLockGuard lock;
+            refreshSpeech();
+            if (_clock_shown) updateClock();
+        }
+    } else if (_low_battery) {
+        mclog::tagInfo(TAG, "battery ok again: {}% (charging={})", pct, charging);
+        LvglLockGuard lock;
+        led(0, 0, 0);
+        refreshSpeech();
+    }
+    _low_battery = low;
 }

@@ -102,6 +102,8 @@ private:
     // ── Sleep / backlight ─────────────────────────────────────────────────────
     void noteActivity(const char* reason = "?");
     void checkDim();
+    void checkBattery();
+    void led(uint8_t r, uint8_t g, uint8_t b);  // RGB ring, halved on battery
 
     // ── State ─────────────────────────────────────────────────────────────────
     buddy::BuddyStore _store;
@@ -163,6 +165,14 @@ private:
     uint32_t _last_activity_ms = 0;
     bool _dimmed              = false;
 
+    // Battery / power
+    uint32_t _bat_tick        = 0;
+    int      _bat_pct         = 100;
+    bool     _on_battery      = false;   // discharging (no external power)
+    bool     _low_battery     = false;   // <= LOW threshold while on battery
+    uint32_t _last_bat_warn_ms = 0;
+    uint32_t _keepalive_tick  = 0;
+
     // LVGL widgets
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_approve;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Button> _btn_deny;
@@ -196,7 +206,15 @@ private:
     static constexpr uint32_t HEAD_TAP_MS           = 1500;  // a real tap releases quickly; drift never does
     static constexpr uint32_t TURN_SHOW_MS        = 7000;
     static constexpr uint32_t OVERLAY_MS          = 10 * 1000;
-    static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;
+    static constexpr uint32_t DIM_AFTER_MS        = 5 * 60 * 1000;   // on external power
+    static constexpr uint32_t DIM_AFTER_BAT_MS    = 60 * 1000;       // on battery
+    static constexpr uint8_t  DIM_LEVEL_USB       = 20;
+    static constexpr uint8_t  DIM_LEVEL_BAT       = 12;
+    static constexpr uint8_t  NORMAL_BRIGHTNESS   = 75;
+    static constexpr uint32_t BAT_POLL_MS         = 30 * 1000;
+    static constexpr int      BAT_LOW_PCT         = 20;
+    static constexpr int      BAT_CRITICAL_PCT    = 10;
+    static constexpr uint32_t BAT_WARN_EVERY_MS   = 5 * 60 * 1000;
     static constexpr uint32_t DAYS_SAVE_EVERY_MS  = 60 * 1000;
     static constexpr uint32_t CLOCK_AFTER_MS      = 3 * 60 * 1000;   // idle/sleep → clock face
     static constexpr uint32_t TOKENS_PER_LEVEL    = 50000;

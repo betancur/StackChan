@@ -696,6 +696,19 @@ bool hal_bridge::board_is_battery_charging()
     }
 }
 
+bool hal_bridge::board_is_battery_discharging()
+{
+    auto& board      = Board::GetInstance();
+    int level        = 0;
+    bool charging    = false;
+    bool discharging = false;
+    if (board.GetBatteryLevel(level, charging, discharging)) {
+        return discharging;
+    } else {
+        return false;
+    }
+}
+
 void hal_bridge::board_set_backlight_brightness(uint8_t brightness, bool permanent)
 {
     auto& board    = Board::GetInstance();

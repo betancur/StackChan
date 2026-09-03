@@ -193,6 +193,7 @@ public:
     void updateHeapStatusLog();
     uint8_t getBatteryLevel();
     bool isBatteryCharging();
+    bool isBatteryDischarging();  // running from the battery (USB absent); false when full but plugged in
     void factoryReset();
 
     /* --------------------------------- Display -------------------------------- */

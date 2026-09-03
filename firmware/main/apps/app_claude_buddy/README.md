@@ -86,6 +86,13 @@ Mensajes que el robot envía:
 - Acuse de cada comando: `{"ack":"<cmd>","ok":true|false,"n":0}`.
 - Respuesta de `status` con nombre, batería, memoria libre, tiempo encendido, estadísticas y `sec:true` cuando el enlace está cifrado.
 
+## Batería y ahorro de energía
+
+- Los servos liberan el torque cuando están quietos y resincronizan el ángulo antes de moverse (misma política que el modo XiaoZhi). Es el mayor ahorro en reposo.
+- En batería (USB ausente): LEDs a la mitad, movimiento de reposo la mitad de frecuente, y la pantalla se atenúa al minuto sin actividad (a los cinco minutos con USB) mientras duerme o muestra el reloj.
+- El temporizador de ahorro del board (pantalla a los 5 min, apagado a los 10 min de inactividad en batería) se mantiene despierto mientras el puente con el Mac esté vivo; con el Mac desconectado se le deja actuar.
+- Alerta de batería baja: al 20 % sin USB suena un aviso, la burbuja dice "Battery NN%! Plug me in" y los LEDs pulsan en rojo en reposo; por debajo del 10 % el aviso se repite cada 5 minutos. El porcentaje aparece en el overlay y en la línea de fecha del reloj (con "+" cuando hay USB).
+
 ## Persistencia y estadísticas
 
 En NVS (namespace `buddy`) se guardan el nombre del dispositivo, el nombre del propietario y los contadores de aprobaciones, denegaciones, aprobaciones rápidas y siestas. El nivel se deriva de los tokens acumulados y no se guarda.
