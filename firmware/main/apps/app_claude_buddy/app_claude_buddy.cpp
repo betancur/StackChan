@@ -684,6 +684,7 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
     auto& sc = GetStackChan();
     clearTransientModifiers();
     showDecisionButtons(mood == Mood::Attention);
+    setGaze(0, 0);
 
     auto& av = sc.avatar();
     av.mouth().setWeight(0);
@@ -916,6 +917,16 @@ void AppClaudeBuddy::updateCelebrateWiggle()
     }
 }
 
+void AppClaudeBuddy::setGaze(int x, int y)
+{
+    // Must be called with LvglLockGuard held. Buddy always attaches a DefaultAvatar.
+    auto& sc = GetStackChan();
+    if (!sc.hasAvatar()) return;
+    auto& ke = sc.avatar().getKeyElements();
+    if (ke.leftEye)  static_cast<avatar::DefaultEyes*>(ke.leftEye.get())->setGaze(x, y);
+    if (ke.rightEye) static_cast<avatar::DefaultEyes*>(ke.rightEye.get())->setGaze(x, y);
+}
+
 void AppClaudeBuddy::updateAttention()
 {
     uint32_t now      = GetHAL().millis();
@@ -945,6 +956,7 @@ void AppClaudeBuddy::updateAttention()
                     mclog::tagInfo(TAG, "look: offset={} yaw {} → {}", offset, cur.x, yaw);
                     motion.moveWithSpeed(yaw, 320, 420);
                     buddy::LookTracker::instance().suppress(LOOK_SETTLE_MS);
+                    setGaze(LOOK_YAW_SIGN * offset, 0);  // eyes glance the same way
                 } else {
                     mclog::tagInfo(TAG, "look: offset={} but motion locked", offset);
                 }

@@ -82,6 +82,13 @@ public:
                         gesture          = HeadPetGesture::Press;
                         mclog::tagInfo(_tag, "press  pads=[{},{},{}] pos={}", data.intensity[0], data.intensity[1],
                                        data.intensity[2], initial_position);
+                        // Repeated taps = rubbing. Only one pad may respond (the
+                        // others drift insensitive), so a position swipe is not
+                        // always possible; two presses within a second count as a pet.
+                        uint32_t since_last = (touch_start_ms - last_release_ms) * portTICK_PERIOD_MS;
+                        if (last_release_ms != 0 && since_last < 1000) {
+                            pending_rub = true;
+                        }
                     }
                 } else if (touched_samples) {
                     mclog::tagInfo(_tag, "blip   ignored (single sample)");
@@ -90,9 +97,17 @@ public:
                 break;
 
             case TouchState::TOUCHED:
-                if (!data.is_touched() || (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS > MAX_TOUCH_MS) {
-                    current_state = TouchState::IDLE;
-                    gesture       = HeadPetGesture::Release;
+                if (pending_rub) {
+                    // Second tap in quick succession: report it as a pet (swipe)
+                    pending_rub   = false;
+                    current_state = TouchState::SWIPING;
+                    gesture       = HeadPetGesture::SwipeForward;
+                    mclog::tagInfo(_tag, "rub    (repeated taps) pads=[{},{},{}]", data.intensity[0],
+                                   data.intensity[1], data.intensity[2]);
+                } else if (!data.is_touched() || (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS > MAX_TOUCH_MS) {
+                    current_state   = TouchState::IDLE;
+                    gesture         = HeadPetGesture::Release;
+                    last_release_ms = data.timestamp;
                     mclog::tagInfo(_tag, "release after {} ms (no swipe{})",
                                    (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS,
                                    data.is_touched() ? ", timeout" : "");
@@ -117,8 +132,9 @@ public:
 
             case TouchState::SWIPING:
                 if (!data.is_touched()) {
-                    current_state = TouchState::IDLE;
-                    gesture       = HeadPetGesture::Release;
+                    current_state   = TouchState::IDLE;
+                    gesture         = HeadPetGesture::Release;
+                    last_release_ms = data.timestamp;
                     mclog::tagInfo(_tag, "release after {} ms (swiped)",
                                    (data.timestamp - touch_start_ms) * portTICK_PERIOD_MS);
                 }
@@ -139,6 +155,8 @@ private:
     int16_t initial_position;
     uint8_t touched_samples = 0;
     uint32_t touch_start_ms = 0;
+    uint32_t last_release_ms = 0;
+    bool pending_rub         = false;
     static constexpr uint32_t MAX_TOUCH_MS = 3000;  // re-arm if something stays "touched"
 };
 

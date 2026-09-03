@@ -79,6 +79,7 @@ private:
     void refreshSpeech();
     void updateLeds();
     void updateAttention();
+    void setGaze(int x, int y);
     static Risk assessRisk(const std::string& tool, const std::string& hint);
     void updateCelebrateWiggle();
     void clearTransientModifiers();

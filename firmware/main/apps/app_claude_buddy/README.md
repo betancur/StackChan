@@ -56,12 +56,12 @@ Clips propios estilo 8-bit sintetizados por `tools/make_buddy_sfx.py` (Ogg Opus,
 
 ### Cara kawaii
 
-Buddy activa una opción del skin por defecto (`DefaultAvatar::kawaii`): ojos blancos de 46 px con pupila negra y dos brillos, mejillas rosadas y boca corta, sobre la cara negra clásica. El parpadeo, el guiño y las emociones siguen usando el párpado, así que todos los gestos funcionan igual. Las demás apps conservan la cara original porque la opción está desactivada por defecto.
+Buddy activa una opción del skin por defecto (`DefaultAvatar::kawaii`): ojos blancos de 46 px con pupila negra y dos brillos, mejillas rosadas y boca corta, sobre la cara negra clásica. Con la emoción Happy (caricias, heart, celebrate) los ojos pasan a arcos "^ ^" y la boca a "ω". Mientras hay una solicitud pendiente, la pupila mira hacia donde la cámara detecta a la persona. El parpadeo, el guiño y el resto de emociones siguen usando el párpado. Las demás apps conservan la cara original porque la opción está desactivada por defecto.
 
 ## Controles
 
 - Tocar la pantalla abre un panel con el número de sesiones, tokens acumulados y del día, nivel, estadísticas de aprobaciones, la última línea del transcript y el gráfico de tokens por día de la última semana. Se cierra solo a los diez segundos o al tocarlo.
-- Con una solicitud pendiente, un toque real en la cabeza (pulsar y soltar en menos de 1.5 s) equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s. El sensor capacitivo deriva a lecturas uniformes en los tres pads durante minutos; el HAL las ignora, exige intensidad 2 o más y rearma el estado a los 3 s, así que las caricias (deslizar el dedo entre pads) siguen dando corazones.
+- Con una solicitud pendiente, un toque real en la cabeza (pulsar y soltar en menos de 1.5 s) equivale a aprobar, salvo en solicitudes de peligro y durante los primeros 1.5 s. El sensor capacitivo deriva a lecturas uniformes en los tres pads durante minutos; el HAL las ignora, exige intensidad 2 o más y rearma el estado a los 3 s, así que las caricias siguen dando corazones. Una caricia es deslizar el dedo entre pads o dar dos toques seguidos en menos de un segundo (útil cuando solo responde un pad).
 - El indicador de inicio cierra la app y devuelve al launcher (warm reboot: NimBLE no puede reiniciarse en caliente).
 
 ## Protocolo

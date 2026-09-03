@@ -18,7 +18,8 @@ static const Vector2i _eye_size_limit = Vector2i(8, 32);
 
 DefaultEyes::DefaultEyes(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t secondaryColor, bool isLeftEye)
 {
-    _is_left_eye = isLeftEye;
+    _is_left_eye   = isLeftEye;
+    _primary_color = primaryColor;
 
     _container = std::make_unique<Container>(parent);
     _container->setRadius(0);
@@ -53,6 +54,10 @@ DefaultEyes::DefaultEyes(lv_obj_t* parent, lv_color_t primaryColor, lv_color_t s
 
 DefaultEyes::~DefaultEyes()
 {
+    if (_arch) {
+        lv_obj_delete(_arch);
+        _arch = nullptr;
+    }
     _eyelid.reset();
     _shine_small.reset();
     _shine_big.reset();
@@ -84,6 +89,22 @@ void DefaultEyes::setKawaii(int eyeSizePx, bool pupil, lv_color_t pupilColor, lv
     }
     _shine_big   = make_dot(shineColor);
     _shine_small = make_dot(shineColor);
+    _kawaii      = true;
+
+    // Happy "^" arch: an LVGL arc using only its background track
+    _arch = lv_arc_create(_container->get());
+    lv_obj_remove_flag(_arch, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(_arch, LV_OBJ_FLAG_SCROLLABLE);
+    lv_arc_set_bg_angles(_arch, 200, 340);  // top arch (0° = 3 o'clock, clockwise)
+    lv_arc_set_value(_arch, 0);
+    lv_obj_set_style_arc_color(_arch, _primary_color, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(_arch, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(_arch, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(_arch, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(_arch, 0, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(_arch, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(_arch, 0, LV_PART_MAIN);
+    lv_obj_add_flag(_arch, LV_OBJ_FLAG_HIDDEN);
 
     // Recompute eye geometry with the new maximum; setSize() lays the shines out
     setSize(getSize());
@@ -91,30 +112,52 @@ void DefaultEyes::setKawaii(int eyeSizePx, bool pupil, lv_color_t pupilColor, lv
     setPosition(_position);
 }
 
+void DefaultEyes::setGaze(int x, int y)
+{
+    _gaze_x = std::clamp(x, -100, 100);
+    _gaze_y = std::clamp(y, -100, 100);
+    int eye_size = map_range(_size, -100, 100, _eye_size_limit.x, _max_eye_px);
+    layout_shines(eye_size);
+}
+
+void DefaultEyes::layout_arch(int eye_size)
+{
+    if (!_arch) {
+        return;
+    }
+    int d = eye_size + 8;
+    lv_obj_set_size(_arch, d, d);
+    lv_obj_align(_arch, LV_ALIGN_CENTER, 0, eye_size * 10 / 100);
+    lv_obj_set_style_arc_width(_arch, std::max(4, eye_size * 16 / 100), LV_PART_MAIN);
+}
+
 void DefaultEyes::layout_shines(int eye_size)
 {
     if (!_shine_big || !_shine_small) {
         return;
     }
+    // Gaze moves pupil + highlights inside the sclera (up to ~18% of the eye)
+    int gx = _gaze_x * (eye_size * 18 / 100) / 100;
+    int gy = _gaze_y * (eye_size * 18 / 100) / 100;
     // With a pupil: pupil ≈ 58% of the eye, slightly low; highlights live inside it.
     // Without: highlights sit on the eye itself. Same side on both eyes (one light).
     if (_pupil) {
         int p = std::max(6, eye_size * 62 / 100);
         _pupil->setSize(p, p);
-        _pupil->align(LV_ALIGN_CENTER, 0, eye_size * 6 / 100);
+        _pupil->align(LV_ALIGN_CENTER, gx, eye_size * 6 / 100 + gy);
         int big   = std::max(4, eye_size * 20 / 100);
         int small = std::max(2, eye_size * 9 / 100);
         _shine_big->setSize(big, big);
-        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 12 / 100, -eye_size * 8 / 100);
+        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 12 / 100 + gx, -eye_size * 8 / 100 + gy);
         _shine_small->setSize(small, small);
-        _shine_small->align(LV_ALIGN_CENTER, eye_size * 14 / 100, eye_size * 18 / 100);
+        _shine_small->align(LV_ALIGN_CENTER, eye_size * 14 / 100 + gx, eye_size * 18 / 100 + gy);
     } else {
         int big   = std::max(4, eye_size * 32 / 100);
         int small = std::max(2, eye_size * 14 / 100);
         _shine_big->setSize(big, big);
-        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 22 / 100, -eye_size * 22 / 100);
+        _shine_big->align(LV_ALIGN_CENTER, -eye_size * 22 / 100 + gx, -eye_size * 22 / 100 + gy);
         _shine_small->setSize(small, small);
-        _shine_small->align(LV_ALIGN_CENTER, eye_size * 24 / 100, eye_size * 26 / 100);
+        _shine_small->align(LV_ALIGN_CENTER, eye_size * 24 / 100 + gx, eye_size * 26 / 100 + gy);
     }
 }
 
@@ -161,6 +204,22 @@ void DefaultEyes::setEmotion(const Emotion& emotion)
         }
     };
 
+    // Kawaii Happy: swap the round eye for the "^" arch (and back)
+    if (_kawaii && _arch) {
+        bool want_arch = (emotion == Emotion::Happy);
+        if (want_arch != _arch_mode) {
+            _arch_mode = want_arch;
+            _eye->setHidden(want_arch);
+            _eyelid->setHidden(want_arch);
+            if (want_arch) lv_obj_remove_flag(_arch, LV_OBJ_FLAG_HIDDEN);
+            else           lv_obj_add_flag(_arch, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (want_arch) {
+            apply_style(100, 0);
+            return;
+        }
+    }
+
     switch (emotion) {
         case Emotion::Neutral:
             apply_style(100, 0);
@@ -190,6 +249,10 @@ void DefaultEyes::setVisible(bool visible)
     Element::setVisible(visible);
 
     _container->setHidden(!visible);
+    if (_arch) {
+        if (visible && _arch_mode) lv_obj_remove_flag(_arch, LV_OBJ_FLAG_HIDDEN);
+        else                       lv_obj_add_flag(_arch, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void DefaultEyes::setSize(int size)
@@ -201,6 +264,7 @@ void DefaultEyes::setSize(int size)
     _eye->setSize(eye_size, eye_size);
     _eyelid->setSize(eye_size, eye_size);
     layout_shines(eye_size);
+    layout_arch(eye_size);
 
     // Force eyelid update
     setWeight(getWeight());

@@ -65,10 +65,19 @@ public:
     /// Kawaii look: open-eye diameter in px, optional pupil, two highlight dots.
     void setKawaii(int eyeSizePx, bool pupil, lv_color_t pupilColor, lv_color_t shineColor);
 
+    /// Kawaii: where the pupil looks (-100..100 each axis, 0 = centre)
+    void setGaze(int x, int y);
+
 private:
     bool _is_left_eye    = false;
     int _eyelid_offset_y = 0;
     int _max_eye_px      = 32;  // container size / largest eye
+    bool _kawaii         = false;
+    bool _arch_mode      = false;  // Happy: "^" arch instead of the round eye
+    int _gaze_x          = 0;
+    int _gaze_y          = 0;
+    lv_color_t _primary_color;
+    lv_obj_t* _arch      = nullptr;
 
     std::unique_ptr<uitk::lvgl_cpp::Container> _container;
     std::unique_ptr<uitk::lvgl_cpp::Container> _eye;
@@ -78,6 +87,7 @@ private:
     std::unique_ptr<uitk::lvgl_cpp::Container> _eyelid;
 
     void layout_shines(int eye_size);
+    void layout_arch(int eye_size);
 };
 
 /**
@@ -96,11 +106,19 @@ public:
 
     /// Kawaii look: narrower mouth (closed width in px; open width follows)
     void setKawaii(int closedWidthPx);
+    void setEmotion(const Emotion& emotion) override;
 
 private:
     int _closed_width = 90;
     int _open_width   = 60;
+    bool _kawaii      = false;
+    bool _cat_mode    = false;  // Happy: "ω" cat mouth instead of the bar
+    lv_color_t _primary_color;
+    lv_obj_t* _cat_left  = nullptr;
+    lv_obj_t* _cat_right = nullptr;
     std::unique_ptr<uitk::lvgl_cpp::Container> _mouth;
+
+    void layout_cat();
 };
 
 /**
