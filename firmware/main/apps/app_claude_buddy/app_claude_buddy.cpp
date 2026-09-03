@@ -190,7 +190,12 @@ void AppClaudeBuddy::onRunning()
         }
     }
 
-    if (_snap.prompt.present) {
+    if (_snap.prompt.present && _prompt_is_question) {
+        // A question with options: only answerable on the Mac
+        if (head_tap || approve_click || deny_click) {
+            mclog::tagInfo(TAG, "question prompt: answer on the Mac");
+        }
+    } else if (_snap.prompt.present) {
         // Head-pet approves only for non-dangerous prompts, and never in the first
         // 1.5 s (the "look up" servo move can tickle the capacitive head sensor).
         bool head_ok = head_tap && _prompt_risk != Risk::Danger &&
@@ -401,9 +406,11 @@ void AppClaudeBuddy::handleSnapshot(JsonObjectConst doc)
             _prompt_seen_id   = s.prompt.id;
             _prompt_seen_ms   = now;
             _last_reminder_ms = now;
-            _prompt_risk      = assessRisk(s.prompt.tool, s.prompt.hint);
+            _prompt_is_question = (s.prompt.tool == "AskUserQuestion");
+            _prompt_risk        = _prompt_is_question ? Risk::None : assessRisk(s.prompt.tool, s.prompt.hint);
             mclog::tagInfo(TAG, "approval pending ({}): {} — {}",
-                           _prompt_risk == Risk::Danger ? "DANGER" : _prompt_risk == Risk::Caution ? "caution" : "ok",
+                           _prompt_is_question ? "question" : _prompt_risk == Risk::Danger ? "DANGER"
+                           : _prompt_risk == Risk::Caution ? "caution" : "ok",
                            s.prompt.tool, s.prompt.hint);
             buddy::play_sfx(buddy::Sfx::Attention);
             if (_mood == Mood::Attention) {
@@ -683,7 +690,7 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
     LvglLockGuard lock;
     auto& sc = GetStackChan();
     clearTransientModifiers();
-    showDecisionButtons(mood == Mood::Attention);
+    showDecisionButtons(mood == Mood::Attention && !_prompt_is_question);
     setGaze(0, 0);
 
     auto& av = sc.avatar();
@@ -711,6 +718,11 @@ void AppClaudeBuddy::setMood(Mood mood, bool force)
             break;  // LEDs: breathing blue in updateLeds()
 
         case Mood::Attention:
+            if (_prompt_is_question) {
+                av.setEmotion(avatar::Emotion::Doubt);
+                sc.motion().moveWithSpeed(0, 320, 300);
+                break;  // LEDs: blue blink in updateLeds()
+            }
             switch (_prompt_risk) {
                 case Risk::Danger:
                     av.setEmotion(avatar::Emotion::Sad);
@@ -795,6 +807,12 @@ void AppClaudeBuddy::refreshSpeech()
             return;
         }
         case Mood::Attention:
+            if (_snap.prompt.present && _prompt_is_question) {
+                std::string t = "Claude has a question!\nAnswer on the Mac";
+                if (!_snap.msg.empty()) t = "Question:\n" + fit(_snap.msg, 36);
+                av.setSpeech(t);
+                return;
+            }
             if (_snap.prompt.present) {
                 std::string tool = _snap.prompt.tool.empty() ? "this" : _snap.prompt.tool;
                 std::string t;
@@ -874,6 +892,8 @@ void AppClaudeBuddy::updateLeds()
             bool on         = ((now / period) % 2) == 0;
             if (!on) {
                 GetHAL().showRgbColor(0, 0, 0);
+            } else if (_prompt_is_question) {
+                GetHAL().showRgbColor(0, 30, 110);
             } else if (_prompt_risk == Risk::Danger) {
                 GetHAL().showRgbColor(110, 0, 0);
             } else if (_prompt_risk == Risk::Caution) {
@@ -1293,7 +1313,9 @@ void AppClaudeBuddy::refreshOverlay()
              _store.nap);
     t += buf;
 
-    if (_snap.prompt.present) {
+    if (_snap.prompt.present && _prompt_is_question) {
+        t += "? Question for you: answer on the Mac\n";
+    } else if (_snap.prompt.present) {
         t += std::string(_prompt_risk == Risk::Danger ? "!! DANGER " : _prompt_risk == Risk::Caution ? "! Careful " : "? ") +
              fit(_snap.prompt.tool + " " + _snap.prompt.hint, 40) + "\n";
     }

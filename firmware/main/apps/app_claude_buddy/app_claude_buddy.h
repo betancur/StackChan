@@ -123,6 +123,7 @@ private:
     std::string _prompt_seen_id;
     std::string _prompt_decided_id;  // already answered; ignore until the desktop drops it
     Risk _prompt_risk     = Risk::None;
+    bool _prompt_is_question = false;  // AskUserQuestion: answered on the Mac, not approve/deny
 
     // Attention escalation / look-at
     uint32_t _last_reminder_ms  = 0;

@@ -42,6 +42,10 @@ El robot clasifica el `hint` de cada solicitud con reglas simples:
 
 Tras tres minutos sin actividad (robot en idle o dormido, sin solicitudes ni toques de pantalla) la pantalla muestra la hora en grande (Fredoka SemiBold 100 px, solo dígitos, generada con `lv_font_conv` desde `main/assets/fonts/Fredoka-SemiBold.ttf`, licencia SIL OFL) y la fecha. Vuelve a la cara en cuanto Claude se pone a trabajar, llega una solicitud o se toca la pantalla. El sensor de la cabeza no cuenta como actividad: se dispara solo cada pocos minutos con el movimiento de reposo de los servos.
 
+### Preguntas de Claude
+
+Cuando la solicitud pendiente es `AskUserQuestion` (una pregunta con opciones), el robot la muestra como pregunta y no como permiso: cara de duda, LEDs azules, texto "Claude has a question, answer on the Mac", sin botones y sin aprobación por toque de cabeza. Los recordatorios del escalado siguen aplicando.
+
 ### Escalado
 
 Si la solicitud lleva más de un minuto sin respuesta, el parpadeo se acelera y suena un recordatorio cada 30 segundos. Si la cámara no detecta a nadie, la cabeza barre a izquierda y derecha buscando al usuario.
