@@ -5,11 +5,20 @@
 #include <cstdint>
 #include <hal/board/config.h>
 
+// URL and token live in roz_secrets.h (git-ignored). Copy roz_secrets.h.example
+// to roz_secrets.h and fill it in before building.
+#if __has_include("roz_secrets.h")
+#include "roz_secrets.h"
+#endif
+#if !defined(ROZ_WS_URL) || !defined(ROZ_API_TOKEN)
+#error "Missing roz_secrets.h: copy roz_secrets.h.example and set ROZ_WS_URL / ROZ_API_TOKEN"
+#endif
+
 namespace roz {
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
-inline constexpr const char* WS_URL        = "wss://openclaw.tail842722.ts.net/voice/ws";
-inline constexpr const char* API_TOKEN     = "8ACdEYNV8RPeE/0U3nP/2Edd7lnF4C4Odp7iMPVKM1c=";
+inline constexpr const char* WS_URL        = ROZ_WS_URL;
+inline constexpr const char* API_TOKEN     = ROZ_API_TOKEN;
 inline constexpr const char* SESSION_ID    = "stackchan-001";
 inline constexpr const char* ASST_NAME     = "Roz";
 

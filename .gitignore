@@ -1,2 +1,4 @@
 .DS_Store
 .idea/
+# Local secrets
+firmware/main/apps/app_roz_agent/roz_secrets.h
